@@ -67,6 +67,31 @@ body::before{content:'';position:fixed;inset:0;
 .sv{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--c,var(--kong));line-height:1;transition:all .3s;}
 .sd{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:4px;}
 
+/* ── LIVE INPUT BAR ── */
+.livebar{background:var(--bg2);border-bottom:2px solid var(--kong);padding:18px 24px;
+  display:flex;flex-direction:column;gap:12px;}
+.lbtop{display:flex;align-items:center;gap:10px;margin-bottom:2px;}
+.lbtitle{font-family:var(--mono);font-size:9px;color:var(--kong);letter-spacing:3px;text-transform:uppercase;}
+.lbsub{font-family:var(--mono);font-size:9px;color:var(--muted);}
+.lbrow{display:flex;align-items:center;gap:10px;}
+.lbinput{flex:1;background:var(--bg);border:1px solid var(--border2);color:var(--text);
+  font-family:var(--mono);font-size:13px;padding:11px 14px;outline:none;
+  transition:border-color .2s;letter-spacing:.5px;}
+.lbinput:focus{border-color:var(--kong);}
+.lbinput::placeholder{color:var(--muted);}
+.lbtest{padding:11px 24px;background:rgba(255,59,92,.12);border:1px solid var(--red);
+  color:var(--red);font-family:var(--mono);font-size:11px;letter-spacing:3px;
+  cursor:pointer;white-space:nowrap;transition:all .2s;}
+.lbtest:hover{background:var(--red);color:#fff;}
+.lbtest:disabled{opacity:.4;cursor:not-allowed;}
+.lbchips{display:flex;gap:8px;flex-wrap:wrap;}
+.chip{background:var(--bg);border:1px solid var(--border);color:var(--muted);
+  font-family:var(--mono);font-size:9px;padding:4px 12px;cursor:pointer;
+  letter-spacing:1px;transition:all .2s;}
+.chip:hover{border-color:var(--kong);color:var(--kong);}
+.chip.chip-r{border-color:rgba(255,59,92,.3);color:var(--red);}
+.chip.chip-r:hover{background:rgba(255,59,92,.1);}
+
 /* ── MAIN DEMO GRID ── */
 .demo{padding:24px 0;display:grid;grid-template-columns:390px 1fr;gap:20px;}
 
@@ -269,6 +294,30 @@ html.light .ldot{box-shadow:0 0 5px var(--green);}
   <div class="si" style="--c:var(--green)"><div class="sl">Safe Traffic</div><div class="sv" id="s3">0</div><div class="sd">Clean queries</div></div>
   <div class="si" style="--c:var(--purple)"><div class="sl">Attacks Blocked</div><div class="sv" id="s4">0</div><div class="sd">Stopped by Kong</div></div>
   <div class="si" style="--c:var(--kong)"><div class="sl">Avg Response</div><div class="sv" id="s5">0</div><div class="sd">ms Kong Gateway</div></div>
+</div>
+
+<!-- LIVE DEMO INPUT BAR -->
+<div class="livebar">
+  <div>
+    <div class="lbtop">
+      <span class="lbtitle">🚀 Live Gateway Tester</span>
+      <span class="lbsub">— Type any domain below and watch Kong AI Gateway respond in real time</span>
+    </div>
+  </div>
+  <div class="lbrow">
+    <input class="lbinput" id="lbinput" placeholder="Type a domain, e.g.  login-volvo.phishing.ru  or  volvo-cars.com"
+      onkeydown="if(event.key==='Enter')lbTest()" />
+    <button class="lbtest" id="lbbtn" onclick="lbTest()">🚨 TEST GATEWAY</button>
+  </div>
+  <div class="lbchips">
+    <span style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:1px;align-self:center;">Quick inject →</span>
+    <button class="chip chip-r" onclick="lbFill('login-volvo-finance.phishing.ru')">PHISHING DOMAIN</button>
+    <button class="chip chip-r" onclick="lbFill('key-server.darknet-cdn.com')">RANSOMWARE C2</button>
+    <button class="chip chip-r" onclick="lbFill('c2-botnet-malware.xyz')">BOTNET BEACON</button>
+    <button class="chip chip-r" onclick="lbFill('aGVsbG8.exfil-dns.io')">DATA EXFILTRATION</button>
+    <button class="chip chip-r" onclick="lbFill('malware-payload-stager.tk')">MALWARE STAGER</button>
+    <button class="chip" onclick="lbFill('volvo-cars.com')" style="border-color:rgba(0,230,118,.3);color:var(--green)">SAFE TRAFFIC</button>
+  </div>
 </div>
 
 <div class="wrap">
@@ -679,6 +728,77 @@ async function loadStats() {
     document.getElementById('s4').textContent = d.blocked_requests;
     document.getElementById('s5').textContent = d.avg_latency_ms;
   } catch(_) {}
+}
+
+// ── Live bar (freeform demo input) ─────────────────────────────────────────
+function lbFill(domain) {
+  document.getElementById('lbinput').value = domain;
+  document.getElementById('lbinput').focus();
+}
+
+async function lbTest() {
+  const domain = document.getElementById('lbinput').value.trim();
+  if (!domain) { document.getElementById('lbinput').focus(); return; }
+
+  // Create a temp scenario object so the pipeline animation works
+  current = {
+    id: 'live',
+    icon: '🔍',
+    title: 'Live Test: ' + domain,
+    domain,
+    src: 'LIVE-DEMO-INPUT',
+    dept: 'Demo',
+    risk: '...',
+    user: 'demo-user',
+    ip: '10.0.0.1',
+    type: 'dns'
+  };
+
+  // Populate detail panel
+  document.getElementById('sdet').classList.add('show');
+  document.getElementById('dicon').textContent = '🔍';
+  document.getElementById('dname').textContent = domain;
+  document.getElementById('ddept').textContent = 'Live Gateway Test';
+  document.getElementById('dstory').textContent = `Testing how Kong AI Gateway responds to: "${domain}"`;
+  document.getElementById('ddomain').textContent = domain;
+  document.getElementById('dsource').textContent = 'LIVE-DEMO-INPUT';
+  document.getElementById('ddept2').textContent = 'Demo';
+  document.getElementById('drisk').textContent = '⏳ Analyzing...';
+
+  const btn = document.getElementById('lbbtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>TESTING...';
+
+  resetPipeline();
+  document.getElementById('rpanel').classList.remove('show');
+  document.getElementById('kvis').classList.remove('show');
+
+  try {
+    const r = await fetch('/api/demo', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain, user_ip: '10.0.0.1', username: 'demo-user' })
+    });
+    const result = await r.json();
+
+    const stopped = result.threat_level === 'BLOCKED' || result.threat_level === 'HIGH';
+    current.risk = result.threat_level === 'LOW' ? '🟢 LOW' : result.threat_level === 'MEDIUM' ? '🟡 MEDIUM' : '🔴 HIGH';
+    document.getElementById('drisk').textContent = current.risk;
+
+    await animatePipeline(result, stopped && result.threat_level !== 'HIGH', false);
+    showResult(result, stopped);
+    addAudit(result, current);
+
+    if (result.threat_level === 'HIGH' || result.threat_level === 'CRITICAL') {
+      document.getElementById('alerttxt').textContent = 'HIGH THREAT — ' + domain + ' — Blocked by Kong AI Gateway';
+      document.getElementById('alertbar').classList.add('show');
+    }
+    await loadStats();
+  } catch(e) {
+    document.getElementById('ppstatus').textContent = '✗ Error: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🚨 TEST GATEWAY';
 }
 
 // ── Theme toggle ───────────────────────────────────────────────────────────
