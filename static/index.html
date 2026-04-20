@@ -12,6 +12,14 @@
   --text:#ddeeff;--muted:#4d7a99;--dim:rgba(221,238,255,0.65);
   --red:#ff3b5c;--orange:#ff8800;--green:#00e676;--purple:#c77dff;
   --mono:'JetBrains Mono',monospace;--head:'Syne',sans-serif;
+  --header-bg:rgba(3,6,9,.97);
+}
+html.light{
+  --bg:#f0f5fb;--bg2:#ffffff;--bg3:#e4edf7;
+  --border:rgba(0,100,180,0.18);--border2:rgba(0,100,180,0.32);
+  --text:#0d1f33;--muted:#5a7a99;--dim:rgba(13,31,51,0.72);
+  --red:#d42b45;--orange:#c96a00;--green:#007a45;--purple:#7b3fb5;
+  --header-bg:rgba(240,245,251,.97);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:var(--head);min-height:100vh;}
@@ -21,8 +29,14 @@ body::before{content:'';position:fixed;inset:0;
   background-size:40px 40px;pointer-events:none;z-index:0;}
 .wrap{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:0 24px;}
 
+/* ── THEME TOGGLE ── */
+.theme-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);
+  font-family:var(--mono);font-size:10px;padding:5px 12px;cursor:pointer;
+  display:flex;align-items:center;gap:6px;letter-spacing:1px;transition:all .2s;}
+.theme-btn:hover{border-color:var(--kong);color:var(--kong);}
+
 /* ── HEADER ── */
-.header{background:rgba(3,6,9,.97);border-bottom:1px solid var(--border);
+.header{background:var(--header-bg);border-bottom:1px solid var(--border);
   backdrop-filter:blur(20px);position:sticky;top:0;z-index:100;
   padding:14px 24px;display:flex;align-items:center;justify-content:space-between;}
 .brand{display:flex;align-items:center;gap:16px;}
@@ -201,6 +215,25 @@ body::before{content:'';position:fixed;inset:0;
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:var(--border2);}
+
+/* ── LIGHT MODE OVERRIDES ── */
+html.light body::before{background-image:
+  linear-gradient(rgba(0,100,180,0.05) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,100,180,0.05) 1px,transparent 1px);}
+html.light .scanline{background:linear-gradient(90deg,transparent,rgba(0,100,180,0.15),transparent);}
+html.light .stage.st-active .sbox{background:rgba(0,100,180,.08);}
+html.light .stage.st-blocked .sbox{background:rgba(212,43,69,.08);}
+html.light .stage.st-success .sbox{background:rgba(0,122,69,.08);}
+html.light .stage.st-warn .sbox{background:rgba(201,106,0,.08);}
+html.light .conn.c-active .cline{box-shadow:0 0 4px rgba(0,100,180,.3);}
+html.light .pkt{box-shadow:0 0 8px var(--kong),0 0 16px rgba(0,100,180,.3);}
+html.light .vH,html.light .vCRITICAL{background:rgba(212,43,69,.08);}
+html.light .vM{background:rgba(201,106,0,.08);}
+html.light .vL{background:rgba(0,122,69,.06);}
+html.light .vB{background:rgba(123,63,181,.08);}
+html.light .kp.kp-ok .kpdot{box-shadow:0 0 4px var(--green);}
+html.light .kp.kp-blk .kpdot{box-shadow:0 0 4px var(--red);}
+html.light .ldot{box-shadow:0 0 5px var(--green);}
 </style>
 </head>
 <body>
@@ -222,6 +255,9 @@ body::before{content:'';position:fixed;inset:0;
   </div>
   <div class="hright">
     <div class="live"><div class="ldot"></div>KONG ACTIVE</div>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">
+      <span id="theme-icon">☀️</span><span id="theme-lbl">LIGHT</span>
+    </button>
     <div class="clock" id="clock">--:--:--</div>
   </div>
 </header>
@@ -645,11 +681,29 @@ async function loadStats() {
   } catch(_) {}
 }
 
+// ── Theme toggle ───────────────────────────────────────────────────────────
+function toggleTheme() {
+  const isLight = document.documentElement.classList.toggle('light');
+  document.getElementById('theme-icon').textContent = isLight ? '🌙' : '☀️';
+  document.getElementById('theme-lbl').textContent  = isLight ? 'DARK' : 'LIGHT';
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('theme');
+  if (saved === 'light') {
+    document.documentElement.classList.add('light');
+    document.getElementById('theme-icon').textContent = '🌙';
+    document.getElementById('theme-lbl').textContent  = 'DARK';
+  }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────
 setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-GB'); }, 1000);
 setInterval(loadStats, 5000);
 renderCards();
 loadStats();
+initTheme();
 </script>
 </body>
 </html>
