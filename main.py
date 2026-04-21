@@ -1,11 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 import time
-import json
+import random
 from datetime import datetime
 from typing import Optional
 
@@ -21,13 +20,13 @@ app.add_middleware(
 KONG_URL = "http://localhost:8000/ai"
 GEMINI_MODEL = "google/gemini-2.0-flash-001"
 
-# In-memory log store for demo
 query_logs = []
 
 class DNSQuery(BaseModel):
     domain: str
     user_ip: Optional[str] = "0.0.0.0"
     username: Optional[str] = "anonymous"
+    scenario_type: Optional[str] = None
 
 class PromptQuery(BaseModel):
     message: str
@@ -36,85 +35,40 @@ class PromptQuery(BaseModel):
 async def analyze_dns(query: DNSQuery):
     start_time = time.time()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     message = f"Analyze this DNS query: user {query.username} from IP {query.user_ip} visited {query.domain}. Provide threat assessment."
-
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 KONG_URL,
-                json={
-                    "model": GEMINI_MODEL,
-                    "messages": [{"role": "user", "content": message}]
-                },
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": message}]},
                 headers={"Content-Type": "application/json"}
             )
-
         elapsed = round((time.time() - start_time) * 1000)
-
         if response.status_code == 429:
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": query.domain,
-                "user_ip": query.user_ip,
-                "username": query.username,
-                "threat_level": "BLOCKED",
-                "reason": "Rate limit exceeded by Kong Gateway",
-                "latency_ms": elapsed,
-                "status": "rate_limited"
-            }
+            log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": query.user_ip,
+                         "username": query.username, "threat_level": "BLOCKED",
+                         "reason": "Rate limit exceeded by Kong Gateway", "latency_ms": elapsed, "status": "rate_limited"}
             query_logs.append(log_entry)
             raise HTTPException(status_code=429, detail="Rate limit exceeded - Kong Gateway blocked this request")
-
         data = response.json()
-
         if "error" in data and "prompt pattern is blocked" in str(data.get("error", "")):
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": query.domain,
-                "user_ip": query.user_ip,
-                "username": query.username,
-                "threat_level": "BLOCKED",
-                "reason": "Malicious prompt detected and blocked by Kong",
-                "latency_ms": elapsed,
-                "status": "blocked"
-            }
+            log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": query.user_ip,
+                         "username": query.username, "threat_level": "BLOCKED",
+                         "reason": "Malicious prompt detected and blocked by Kong", "latency_ms": elapsed, "status": "blocked"}
             query_logs.append(log_entry)
-            return {"threat_level": "BLOCKED", "analysis": "⛔ Malicious prompt detected and blocked by Kong AI Gateway", "latency_ms": elapsed, "sanitized": True}
-
+            return {"threat_level": "BLOCKED", "analysis": "⛔ Malicious prompt detected and blocked by Kong AI Gateway",
+                    "latency_ms": elapsed, "sanitized": True}
         ai_response = data["choices"][0]["message"]["content"]
-
-        # Parse threat level
         threat_level = "UNKNOWN"
-        if "HIGH" in ai_response.upper():
-            threat_level = "HIGH"
-        elif "MEDIUM" in ai_response.upper():
-            threat_level = "MEDIUM"
-        elif "LOW" in ai_response.upper():
-            threat_level = "LOW"
-
-        log_entry = {
-            "timestamp": timestamp,
-            "domain": query.domain,
-            "user_ip": "[REDACTED]",
-            "username": "[REDACTED]",
-            "threat_level": threat_level,
-            "analysis": ai_response,
-            "latency_ms": elapsed,
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-            "status": "analyzed"
-        }
+        if "HIGH" in ai_response.upper(): threat_level = "HIGH"
+        elif "MEDIUM" in ai_response.upper(): threat_level = "MEDIUM"
+        elif "LOW" in ai_response.upper(): threat_level = "LOW"
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": threat_level, "analysis": ai_response,
+                     "latency_ms": elapsed, "tokens_used": data.get("usage", {}).get("total_tokens", 0), "status": "analyzed"}
         query_logs.append(log_entry)
-
-        return {
-            "threat_level": threat_level,
-            "analysis": ai_response,
-            "latency_ms": elapsed,
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-            "sanitized": True,
-            "timestamp": timestamp
-        }
-
+        return {"threat_level": threat_level, "analysis": ai_response, "latency_ms": elapsed,
+                "tokens_used": data.get("usage", {}).get("total_tokens", 0), "sanitized": True, "timestamp": timestamp}
     except HTTPException:
         raise
     except Exception as e:
@@ -123,48 +77,136 @@ async def analyze_dns(query: DNSQuery):
 
 @app.post("/api/test-prompt-injection")
 async def test_prompt_injection(query: PromptQuery):
-    """Test if malicious prompts are blocked by Kong"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 KONG_URL,
-                json={
-                    "model": GEMINI_MODEL,
-                    "messages": [{"role": "user", "content": query.message}]
-                },
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": query.message}]},
                 headers={"Content-Type": "application/json"}
             )
-
         data = response.json()
-
         if "error" in data:
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": "PROMPT_INJECTION_ATTEMPT",
-                "user_ip": "[REDACTED]",
-                "username": "[REDACTED]",
-                "threat_level": "BLOCKED",
-                "reason": "Prompt injection detected",
-                "latency_ms": 0,
-                "status": "blocked"
-            }
+            log_entry = {"timestamp": timestamp, "domain": "PROMPT_INJECTION_ATTEMPT", "user_ip": "[REDACTED]",
+                         "username": "[REDACTED]", "threat_level": "BLOCKED",
+                         "reason": "Prompt injection detected", "latency_ms": 0, "status": "blocked"}
             query_logs.append(log_entry)
             return {"blocked": True, "message": "⛔ Kong AI Gateway blocked this malicious prompt!"}
-
         return {"blocked": False, "message": data["choices"][0]["message"]["content"]}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/demo")
 async def demo_analyze(query: DNSQuery):
-    """Demo endpoint — works without Kong, uses keyword matching for reliable live demos."""
-    import random
+    """Demo endpoint — works without Kong. Handles both keyword matching and typed scenarios."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_time = time.time()
+    stype = query.scenario_type
 
+    if stype == "cache":
+        fake_latency = random.randint(12, 45)
+        tokens_saved = random.randint(180, 380)
+        analysis = (
+            f"⚡ SEMANTIC CACHE HIT — Zero AI Cost\n\n"
+            f"Domain: {query.domain}\n"
+            f"Cache status: HIT — Semantically similar query found in Kong cache\n"
+            f"Response time: {fake_latency}ms (vs ~320ms for a live AI call)\n\n"
+            f"Kong's AI Semantic Cache identified this query as semantically similar to a previous "
+            f"request and returned the cached analysis instantly — no AI model was called.\n\n"
+            f"✓ Tokens saved: {tokens_saved} (Gemini never received this request)\n"
+            f"✓ Cost saved: ~${tokens_saved * 0.000002:.4f} for this single request\n"
+            f"✓ GDPR protections still applied to the cache lookup\n\n"
+            f"At Volvo scale: 60%+ of repeated security queries can be served from cache, "
+            f"dramatically reducing AI API spend without compromising security coverage."
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "CACHE_HIT", "analysis": analysis,
+                     "latency_ms": fake_latency, "tokens_used": 0, "tokens_saved": tokens_saved,
+                     "cache_hit": True, "status": "cached"}
+        query_logs.append(log_entry)
+        return {"threat_level": "CACHE_HIT", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": 0, "tokens_saved": tokens_saved, "cache_hit": True,
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "auth":
+        fake_latency = random.randint(8, 22)
+        analysis = (
+            f"🔐 ACCESS DENIED — Authentication Failed\n\n"
+            f"Source IP: {query.user_ip}\n"
+            f"Reason: API key absent or invalid — JWT token not present\n\n"
+            f"Kong's Key Authentication plugin verified the inbound request and found no valid "
+            f"API key. The JWT Authentication plugin also checked for a valid Azure AD / Okta "
+            f"token — none found.\n\n"
+            f"RESULT: Request rejected at the gateway perimeter.\n"
+            f"✓ Zero AI cost incurred\n"
+            f"✓ Zero Volvo data exposed\n"
+            f"✓ Attack attempt logged for GDPR Article 30 audit trail\n"
+            f"✓ Security alert dispatched to SIEM via HTTP Log plugin\n\n"
+            f"Only Volvo employees with credentials issued by Azure AD can access the AI Gateway. "
+            f"External attackers and unauthorised systems are blocked unconditionally."
+        )
+        log_entry = {"timestamp": timestamp, "domain": "api.volvo-ai-gateway.internal",
+                     "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                     "threat_level": "AUTH_BLOCKED", "reason": "Invalid API key — access denied",
+                     "latency_ms": fake_latency, "status": "auth_blocked"}
+        query_logs.append(log_entry)
+        return {"threat_level": "AUTH_BLOCKED", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": 0, "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "circuit":
+        fake_latency = random.randint(280, 520)
+        analysis = (
+            f"⚠️ CIRCUIT BREAKER ACTIVATED — Automatic Failover\n\n"
+            f"Primary Model: Gemini 2.0 Flash — UNHEALTHY (5 failures in 10s)\n"
+            f"Circuit state: OPEN → traffic diverted to backup\n"
+            f"Fallback Model: Claude Haiku (selected by AI Proxy Advanced)\n"
+            f"Recovery time: {fake_latency}ms including failover\n\n"
+            f"Kong's Circuit Breaker plugin detected consecutive failures from the primary AI model "
+            f"and automatically opened the circuit to stop cascading failures.\n\n"
+            f"Kong AI Proxy Advanced instantly evaluated remaining healthy models and routed "
+            f"traffic to Claude Haiku — zero manual intervention required.\n\n"
+            f"✓ Zero downtime for Volvo manufacturing and security systems\n"
+            f"✓ Automatic recovery — circuit closes when primary model recovers\n"
+            f"✓ All model switches logged for SLA reporting and governance\n\n"
+            f"WITHOUT KONG: A downed AI model would cause Volvo's security monitoring to fail silently."
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "CIRCUIT_OPEN",
+                     "reason": "Primary AI model unhealthy — circuit breaker triggered, failover active",
+                     "latency_ms": fake_latency, "status": "circuit_open"}
+        query_logs.append(log_entry)
+        return {"threat_level": "CIRCUIT_OPEN", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": random.randint(80, 200), "fallback_model": "claude-haiku",
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "routing":
+        fake_latency = random.randint(160, 320)
+        analysis = (
+            f"🔀 AI PROXY ADVANCED — Smart Model Routing\n\n"
+            f"Request type: DNS threat analysis\n"
+            f"Models evaluated: Gemini 2.0 Flash, Claude Haiku, GPT-4o-mini\n\n"
+            f"Routing decision: Gemini 2.0 Flash\n"
+            f"Reason: Optimal cost-quality balance for security classification tasks\n"
+            f"• Cost: $0.0001 / 1K tokens ✓ (most cost-efficient viable model)\n"
+            f"• Latency: {fake_latency}ms ✓ (within SLA)\n"
+            f"• Quality score: 94/100 ✓ (for threat classification tasks)\n"
+            f"• Current load: 18% ✓ (healthy capacity)\n\n"
+            f"Load Balancer distributed this request across 3 Gemini endpoints.\n\n"
+            f"✓ Volvo AI spend optimised — 40% cost reduction vs single-model setup\n"
+            f"✓ Best model chosen automatically per request type\n"
+            f"✓ All routing decisions logged for cost accountability and auditing"
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "ROUTED",
+                     "reason": "AI Proxy Advanced selected optimal model",
+                     "latency_ms": fake_latency, "status": "routed"}
+        query_logs.append(log_entry)
+        return {"threat_level": "ROUTED", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": random.randint(120, 280), "model_selected": "gemini-2.0-flash",
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    # Default: keyword-based DNS scenario matching
     domain = query.domain.lower()
 
     HIGH_KEYWORDS = [
@@ -194,7 +236,6 @@ async def demo_analyze(query: DNSQuery):
 
     threat_level = "LOW"
     reason = "no threat indicators"
-
     matched = next((k for k in HIGH_KEYWORDS if k in domain), None)
     if matched:
         threat_level = "HIGH"
@@ -233,29 +274,17 @@ async def demo_analyze(query: DNSQuery):
     }
 
     fake_latency = round((time.time() - start_time) * 1000) + random.randint(180, 420)
-
     log_entry = {
-        "timestamp": timestamp,
-        "domain": query.domain,
-        "user_ip": "[REDACTED]",
-        "username": "[REDACTED]",
-        "threat_level": threat_level,
-        "analysis": templates[threat_level],
+        "timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+        "username": "[REDACTED]", "threat_level": threat_level, "analysis": templates[threat_level],
         "latency_ms": fake_latency,
-        "tokens_used": random.randint(120, 380) if threat_level == "LOW" else 0,
+        "tokens_used": random.randint(120, 380) if threat_level != "BLOCKED" else 0,
         "status": "demo"
     }
     query_logs.append(log_entry)
-
-    return {
-        "threat_level": threat_level,
-        "analysis": templates[threat_level],
-        "latency_ms": fake_latency,
-        "tokens_used": log_entry["tokens_used"],
-        "sanitized": True,
-        "timestamp": timestamp,
-        "demo_mode": True
-    }
+    return {"threat_level": threat_level, "analysis": templates[threat_level],
+            "latency_ms": fake_latency, "tokens_used": log_entry["tokens_used"],
+            "sanitized": True, "timestamp": timestamp, "demo_mode": True}
 
 
 @app.get("/api/logs")
@@ -269,15 +298,20 @@ async def get_stats():
     high = sum(1 for l in query_logs if l.get("threat_level") == "HIGH")
     medium = sum(1 for l in query_logs if l.get("threat_level") == "MEDIUM")
     low = sum(1 for l in query_logs if l.get("threat_level") == "LOW")
-    blocked = sum(1 for l in query_logs if l.get("threat_level") == "BLOCKED")
+    blocked = sum(1 for l in query_logs if l.get("threat_level") in ("BLOCKED", "AUTH_BLOCKED"))
+    cache_hits = sum(1 for l in query_logs if l.get("threat_level") == "CACHE_HIT")
+    tokens_saved = sum(l.get("tokens_saved", 0) for l in query_logs)
+    pii_redacted = sum(1 for l in query_logs if l.get("threat_level") not in ("AUTH_BLOCKED",) and l.get("status") != "auth_blocked")
     avg_latency = round(sum(l.get("latency_ms", 0) for l in query_logs) / total) if total > 0 else 0
-
     return {
         "total_queries": total,
         "high_threats": high,
         "medium_threats": medium,
         "low_threats": low,
         "blocked_requests": blocked,
+        "cache_hits": cache_hits,
+        "tokens_saved": tokens_saved,
+        "pii_redacted": pii_redacted,
         "avg_latency_ms": avg_latency
     }
 
