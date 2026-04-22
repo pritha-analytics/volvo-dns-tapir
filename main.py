@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
+import re
 import time
 import random
 from datetime import datetime
@@ -30,6 +31,17 @@ class DNSQuery(BaseModel):
 
 class PromptQuery(BaseModel):
     message: str
+
+class ChatMessage(BaseModel):
+    message: str
+
+PII_PATTERNS = [
+    (r'\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b', 'Credit / Debit Card Number'),
+    (r'\b\d{3}[\-\s]?\d{2}[\-\s]?\d{4}\b', 'Social Security Number'),
+    (r'\b\d{6,8}[\-]\d{4}\b', 'Swedish Personal Number (Personnummer)'),
+    (r'\b\d{8,12}[\-]\d{3,4}\b', 'ID / Account Number'),
+    (r'\b(?:\+46|0)\s?\d{2,3}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b', 'Phone Number'),
+]
 
 @app.post("/api/analyze")
 async def analyze_dns(query: DNSQuery):
@@ -71,6 +83,88 @@ async def analyze_dns(query: DNSQuery):
                 "tokens_used": data.get("usage", {}).get("total_tokens", 0), "sanitized": True, "timestamp": timestamp}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat")
+async def chat(body: ChatMessage):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    for pattern, pii_type in PII_PATTERNS:
+        if re.search(pattern, message, re.IGNORECASE):
+            query_logs.append({
+                "timestamp": timestamp, "domain": "CHAT_SESSION",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": f"PII detected: {pii_type}",
+                "latency_ms": 0, "status": "pii_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "PII", "pii_type": pii_type,
+                "stage": "KONG_FIREWALL", "timestamp": timestamp,
+                "message": (
+                    f"Kong AI Gateway detected and blocked sensitive personal information "
+                    f"({pii_type}) before it reached the AI model. "
+                    f"The data was never transmitted or stored."
+                )
+            }
+
+    start = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                KONG_URL,
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": message}]},
+                headers={"Content-Type": "application/json"}
+            )
+        elapsed = round((time.time() - start) * 1000)
+
+        if response.status_code == 429:
+            query_logs.append({
+                "timestamp": timestamp, "domain": "CHAT_SESSION",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": "Rate limit exceeded",
+                "latency_ms": elapsed, "status": "rate_limited"
+            })
+            return {
+                "blocked": True, "block_type": "RATE_LIMIT",
+                "stage": "KONG_RATE_LIMITER", "timestamp": timestamp,
+                "message": "Kong Gateway rate limit reached (5 req/min). Please wait before sending again."
+            }
+
+        data = response.json()
+
+        if "error" in data:
+            query_logs.append({
+                "timestamp": timestamp, "domain": "CHAT_SESSION",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": "Prompt injection / manipulation attempt",
+                "latency_ms": elapsed, "status": "injection_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "INJECTION",
+                "stage": "KONG_GUARD", "timestamp": timestamp,
+                "message": "Kong AI Firewall blocked this prompt — it matched patterns associated with AI manipulation or jailbreak attempts."
+            }
+
+        ai_response = data["choices"][0]["message"]["content"]
+        tokens = data.get("usage", {}).get("total_tokens", 0)
+        query_logs.append({
+            "timestamp": timestamp, "domain": "CHAT_SESSION",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "LOW", "analysis": ai_response,
+            "latency_ms": elapsed, "tokens_used": tokens, "status": "allowed"
+        })
+        return {
+            "blocked": False, "response": ai_response,
+            "stage": "DELIVERED", "latency_ms": elapsed,
+            "tokens": tokens, "timestamp": timestamp
+        }
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Kong Gateway timeout")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
