@@ -2,110 +2,115 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kong AI Gateway — Chat Interface</title>
+<title>Kong AI Gateway — Volvo MCP Agent</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-/* Base theme variables */
 :root {
-  --bg: #030609; --bg2: #07101a; --bg3: #0b1826;
-  --border: rgba(0, 150, 220, 0.15); --border2: rgba(0, 150, 220, 0.3);
-  --volvo: #003366; --kong: #0096dc;
-  --text: #ddeeff; --muted: #4d7a99; --dim: rgba(221, 238, 255, 0.65);
-  --red: #ff3b5c; --orange: #ff8800; --green: #00e676; --purple: #c77dff;
-  --mono: 'JetBrains Mono', monospace; --head: 'Syne', sans-serif;
-  --header-bg: rgba(3, 6, 9, .97);
+  --bg:#030609;--bg2:#07101a;--bg3:#0b1826;
+  --border:rgba(0,150,220,.15);--border2:rgba(0,150,220,.3);
+  --volvo:#003366;--kong:#0096dc;
+  --text:#ddeeff;--muted:#4d7a99;--dim:rgba(221,238,255,.65);
+  --red:#ff3b5c;--orange:#ff8800;--green:#00e676;--purple:#c77dff;--teal:#00d4aa;
+  --mono:'JetBrains Mono',monospace;--head:'Syne',sans-serif;
 }
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:var(--bg); color:var(--text); font-family:var(--head); height:100vh; display:flex; flex-direction:column; overflow:hidden;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:var(--head);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
 body::before{content:'';position:fixed;inset:0;
-  background-image:linear-gradient(rgba(0,150,220,0.02) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(0,150,220,0.02) 1px,transparent 1px);
+  background-image:linear-gradient(rgba(0,150,220,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(0,150,220,.02) 1px,transparent 1px);
   background-size:40px 40px;pointer-events:none;z-index:0;}
 
 /* Header */
-.header { background:var(--header-bg); border-bottom:1px solid var(--border); backdrop-filter:blur(20px);
-  position:relative; z-index:100; padding:14px 24px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0;}
+.header{background:rgba(3,6,9,.97);border-bottom:1px solid var(--border);backdrop-filter:blur(20px);
+  position:relative;z-index:100;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .brand{display:flex;align-items:center;gap:16px;}
-.vlogo{background:var(--volvo);border:1px solid #004488;padding:6px 14px; font-family:var(--head);font-weight:800;font-size:15px;letter-spacing:5px;color:#fff;}
-.ttl{font-family:var(--mono);font-size:11px;color:var(--kong);letter-spacing:3px;}
+.vlogo{background:var(--volvo);border:1px solid #004488;padding:5px 14px;font-weight:800;font-size:14px;letter-spacing:5px;color:#fff;}
+.ttl{font-family:var(--mono);font-size:10px;color:var(--kong);letter-spacing:3px;}
 .live{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:2px;}
 .ldot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.5s infinite;}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.8);}}
 
-/* Chat Layout */
-.main-area { flex: 1; display:flex; flex-direction:column; overflow:hidden; position:relative; z-index:1; }
-.chat-window { flex:1; overflow-y:auto; overflow-x:hidden; padding:24px; scroll-behavior: smooth;}
-.chat-inner { width: 100%; max-width: 800px; display:flex; flex-direction:column; gap:24px; padding-bottom: 20px; margin: 0 auto;}
+/* Layout */
+.main-area{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;z-index:1;}
+.chat-window{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px;scroll-behavior:smooth;}
+.chat-inner{width:100%;max-width:820px;display:flex;flex-direction:column;gap:20px;padding-bottom:16px;margin:0 auto;}
 
-.msg-wrapper { display:flex; flex-direction:column; gap:8px; animation: slideUp 0.3s ease-out;}
-@keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-.msg-wrapper.usermsg { align-items:flex-end; }
-.msg-wrapper.aimsg { align-items:flex-start; }
+.msg-wrapper{display:flex;flex-direction:column;gap:6px;animation:slideUp .3s ease-out;}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg-wrapper.usermsg{align-items:flex-end;}
+.msg-wrapper.aimsg{align-items:flex-start;}
+.msg-bubble{max-width:88%;padding:14px 18px;line-height:1.65;border-radius:8px;font-size:14px;white-space:pre-wrap;}
+.usermsg .msg-bubble{background:rgba(0,150,220,.1);border:1px solid var(--border2);color:#fff;}
+.aimsg .msg-bubble{background:var(--bg2);border:1px solid var(--border);color:var(--dim);}
+.aimsg.blocked .msg-bubble{background:rgba(255,59,92,.1);border-color:rgba(255,59,92,.3);color:var(--red);}
+.msg-meta{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;}
 
-.msg-bubble { max-width: 85%; padding: 16px 20px; line-height: 1.6; font-family: var(--head); letter-spacing: 0.5px; border-radius: 8px;}
-.usermsg .msg-bubble { background: rgba(0, 150, 220, 0.1); border: 1px solid var(--border2); color: #fff;}
-.aimsg .msg-bubble { background: var(--bg2); border: 1px solid var(--border); color: var(--dim);}
-.aimsg.blocked .msg-bubble { background: rgba(255, 59, 92, 0.1); border-color: rgba(255, 59, 92, 0.3); color: var(--red); }
-.msg-meta { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase;}
+/* Input */
+.input-area{background:var(--bg2);border-top:1px solid var(--border);padding:16px 20px;display:flex;justify-content:center;flex-shrink:0;}
+.input-inner{width:100%;max-width:820px;display:flex;gap:10px;}
+.chat-input{flex:1;background:var(--bg);border:1px solid var(--border2);color:#fff;font-family:var(--mono);font-size:13px;padding:13px 18px;outline:none;border-radius:6px;transition:border .3s;}
+.chat-input:focus{border-color:var(--kong);}
+.chat-input::placeholder{color:var(--muted);}
+.chat-send{background:rgba(0,150,220,.15);border:1px solid var(--kong);color:var(--kong);font-family:var(--mono);font-size:11px;padding:0 22px;cursor:pointer;letter-spacing:2px;border-radius:6px;transition:all .2s;}
+.chat-send:hover{background:var(--kong);color:#fff;}
+.chat-send:disabled{opacity:.5;cursor:not-allowed;}
 
-/* Input Area */
-.input-area { background: var(--bg2); border-top: 1px solid var(--border); padding: 20px; display:flex; justify-content:center; flex-shrink:0;}
-.input-inner { width: 100%; max-width: 800px; display:flex; gap: 12px; position: relative;}
-.chat-input { flex: 1; background: var(--bg); border: 1px solid var(--border2); color: #fff; font-family: var(--mono); font-size: 13px; padding: 14px 20px; outline: none; border-radius: 6px; transition: border 0.3s;}
-.chat-input:focus { border-color: var(--kong); }
-.chat-input::placeholder { color: var(--muted); }
-.chat-send { background: rgba(0, 150, 220, 0.15); border: 1px solid var(--kong); color: var(--kong); font-family: var(--mono); font-size: 11px; padding: 0 24px; cursor: pointer; letter-spacing: 2px; border-radius: 6px; transition: all 0.2s;}
-.chat-send:hover { background: var(--kong); color: #fff;}
-.chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Bottom Panel */
+.ppanel{background:rgba(3,6,9,.97);border-top:1px solid var(--kong);position:relative;z-index:10;flex-shrink:0;}
+#ppstatus{text-align:center;font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:2px;padding:5px 0;border-bottom:1px solid var(--border);}
 
-/* Pipeline section (reused but styled modern) */
-.ppanel { background: var(--header-bg); border-top: 1px solid var(--kong); position:relative; z-index:10; display:flex; flex-direction:column; flex-shrink:0;}
-.pflow-scroll { overflow-x:auto; padding: 16px 24px; display: flex; justify-content: center;}
-.pflow { display:flex; align-items:center; gap:0;}
-.stage{display:flex;flex-direction:column;align-items:center;width:80px;flex-shrink:0;position:relative;z-index:2;}
-.sbox{width:60px;height:60px;border:1px solid var(--border);background:var(--bg3);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .3s;}
-.sico{font-size:20px;line-height:1;margin-bottom:4px;}
+/* Pipeline: main row + MCP branch */
+.pipeline-wrap{padding:14px 24px 6px;overflow-x:auto;}
+.pipeline-main{display:flex;align-items:center;justify-content:center;gap:0;}
+
+/* Stages */
+.stage{display:flex;flex-direction:column;align-items:center;width:78px;flex-shrink:0;}
+.stage.wide{width:100px;}
+.sbox{width:58px;height:58px;border:1px solid var(--border);background:var(--bg3);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .3s;border-radius:4px;}
+.wide .sbox{width:78px;height:64px;}
+.sico{font-size:18px;line-height:1;margin-bottom:3px;}
 .slbl{font-family:var(--mono);font-size:7px;color:var(--muted);letter-spacing:1px;text-align:center;text-transform:uppercase;}
-.sname{font-family:var(--mono);font-size:8px;color:var(--muted);text-align:center;margin-top:6px;letter-spacing:1px;text-transform:uppercase;}
-.stage.kong-stage{width:110px;}
-.stage.kong-stage .sbox{width:90px;height:70px;}
-.stage.st-active .sbox{border-color:var(--kong);background:rgba(0,150,220,.1);box-shadow:0 0 18px rgba(0,150,220,.3);}
+.sname{font-family:var(--mono);font-size:7.5px;color:var(--muted);text-align:center;margin-top:5px;letter-spacing:.5px;text-transform:uppercase;}
+
+.stage.st-active .sbox{border-color:var(--kong);background:rgba(0,150,220,.1);box-shadow:0 0 16px rgba(0,150,220,.3);}
 .stage.st-active .slbl{color:var(--kong);}
-.stage.st-blocked .sbox{border-color:var(--red);background:rgba(255,59,92,.1);box-shadow:0 0 18px rgba(255,59,92,.3);}
-.stage.st-success .sbox{border-color:var(--green);background:rgba(0,230,118,.08);box-shadow:0 0 14px rgba(0,230,118,.2);}
-.stage.st-warn .sbox{border-color:var(--orange);background:rgba(255,136,0,.1);box-shadow:0 0 14px rgba(255,136,0,.2);}
-.conn{flex:1;height:2px;background:var(--border);position:relative;margin-bottom:18px;min-width:24px;max-width:50px;}
+.stage.st-blocked .sbox{border-color:var(--red);background:rgba(255,59,92,.1);box-shadow:0 0 16px rgba(255,59,92,.3);}
+.stage.st-success .sbox{border-color:var(--green);background:rgba(0,230,118,.07);box-shadow:0 0 12px rgba(0,230,118,.2);}
+.stage.st-mcp .sbox{border-color:var(--teal);background:rgba(0,212,170,.08);box-shadow:0 0 14px rgba(0,212,170,.25);}
+.stage.st-mcp .slbl{color:var(--teal);}
+
+/* Connectors */
+.conn{flex:1;height:2px;background:var(--border);position:relative;margin-bottom:16px;min-width:20px;max-width:44px;}
 .cline{position:absolute;top:0;left:0;right:0;height:100%;background:var(--border);transition:background .3s;}
 .conn.c-active .cline{background:var(--kong);box-shadow:0 0 6px rgba(0,150,220,.5);}
+.conn.c-mcp .cline{background:var(--teal);box-shadow:0 0 6px rgba(0,212,170,.5);}
 .conn.c-blocked .cline{background:rgba(255,59,92,.3);}
-.pkt{position:absolute;width:10px;height:10px;border-radius:50%;background:var(--kong);box-shadow:0 0 10px var(--kong);top:-4px;left:-10px;opacity:0;}
-.conn.c-travel .pkt{animation:travel .65s ease-in-out forwards;}
+.pkt{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--kong);box-shadow:0 0 10px var(--kong);top:-3.5px;left:-10px;opacity:0;}
+.conn.c-travel .pkt{animation:travel .6s ease-in-out forwards;}
+.conn.c-mcp-travel .pkt{background:var(--teal);box-shadow:0 0 10px var(--teal);animation:travel .6s ease-in-out forwards;}
 @keyframes travel{0%{left:-10px;opacity:0;}10%{opacity:1;}85%{opacity:1;}100%{left:calc(100% + 5px);opacity:0;}}
 
-/* Expanded Plugin Grid Tracker */
-.kvis-panel { border-top:1px solid var(--border); overflow:hidden; transition: max-height 0.4s ease-in-out; max-height: 0px;}
-.kvis-panel.show { max-height: 200px; overflow-y:auto;}
-.kvis { padding: 12px 24px; display:flex; gap: 24px; justify-content: center; flex-wrap:wrap;}
-.kcat { width: 220px; flex-shrink:0;}
-.kcath { font-family:var(--mono);font-size:8px;color:var(--kong);letter-spacing:2px;text-transform:uppercase; border-bottom:1px solid var(--border); padding-bottom: 4px; margin-bottom: 8px;}
-.kvgrid1 { display:flex; flex-direction:column; gap:6px;}
-.kp{padding:8px; background:var(--bg); border:1px solid var(--border); display:flex; align-items:flex-start; gap:8px;}
-.kpdot{width:6px;height:6px;border-radius:50%;background:var(--muted);margin-top:3px;flex-shrink:0;}
-.kp.kp-ok .kpdot{background:var(--green);box-shadow:0 0 6px var(--green);}
-.kp.kp-blk .kpdot{background:var(--red);box-shadow:0 0 6px var(--red);}
-.kpname{font-family:var(--mono);font-size:8px;font-weight:600;color:var(--muted);margin-bottom:2px;}
-.kp.kp-ok .kpname{color:var(--green);}
-.kp.kp-blk .kpname{color:var(--red);}
-.kpact{font-family:var(--mono);font-size:7px;color:var(--muted);line-height:1.4;}
+/* MCP branch — drop-down row below the pipeline */
+.mcp-branch{display:none;padding:0 24px 10px;justify-content:center;}
+.mcp-branch.show{display:flex;}
+.mcp-row{display:flex;align-items:center;gap:0;border-top:2px dashed rgba(0,212,170,.25);padding-top:10px;}
+.mcp-label{font-family:var(--mono);font-size:7px;color:var(--teal);letter-spacing:2px;text-transform:uppercase;writing-mode:vertical-rl;transform:rotate(180deg);margin-right:10px;opacity:.7;}
+
+/* Live step log */
+.step-log{border-top:1px solid var(--border);max-height:72px;overflow-y:auto;padding:6px 24px;display:none;}
+.step-log.show{display:block;}
+.step-line{font-family:var(--mono);font-size:9px;color:var(--muted);padding:2px 0;border-bottom:1px solid rgba(0,150,220,.05);}
+.step-line.mcp{color:var(--teal);}
+.step-line.kong{color:var(--kong);}
+.step-line.ok{color:var(--green);}
+.step-line.blk{color:var(--red);}
 
 /* Loader */
-.thinking { display:none; padding:12px; font-family:var(--mono); font-size:11px; color:var(--kong); letter-spacing:2px;}
-.thinking.show { display:inline-flex; align-items:center; gap:8px;}
-.dot { width: 4px; height: 4px; background: var(--kong); border-radius: 50%; opacity:0; animation: blink 1.4s infinite forwards;}
-.dot:nth-child(2) { animation-delay: 0.2s;}
-.dot:nth-child(3) { animation-delay: 0.4s;}
-@keyframes blink { 0%, 100% { opacity:0; } 50% { opacity:1; } }
-::-webkit-scrollbar{width:4px;height:4px;}
+.thinking{display:none;padding:10px;font-family:var(--mono);font-size:11px;color:var(--kong);letter-spacing:2px;}
+.thinking.show{display:inline-flex;align-items:center;gap:8px;}
+.dot{width:4px;height:4px;background:var(--kong);border-radius:50%;opacity:0;animation:blink 1.4s infinite;}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,100%{opacity:0}50%{opacity:1}}
+::-webkit-scrollbar{width:3px;height:3px;}
 ::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:var(--border2);}
 </style>
@@ -115,9 +120,9 @@ body::before{content:'';position:fixed;inset:0;
 <header class="header">
   <div class="brand">
     <div class="vlogo">VOLVO</div>
-    <div class="ttl">Enterprise AI Chat — Secured by Kong Gateway</div>
+    <div class="ttl">Enterprise AI Agent — MCP + Kong Gateway</div>
   </div>
-  <div class="live"><div class="ldot"></div>KONG PROMPT GUARD ENFORCED</div>
+  <div class="live"><div class="ldot"></div>KONG + MCP SECURED</div>
 </header>
 
 <main class="main-area">
@@ -125,189 +130,256 @@ body::before{content:'';position:fixed;inset:0;
     <div class="chat-inner" id="chatinner">
       <div class="msg-wrapper aimsg">
         <div class="msg-meta">System</div>
-        <div class="msg-bubble">Hello. This is the Volvo Enterprise AI Chat. All LLM outbound connections are routed securely through the Kong AI Gateway for full zero-trust validation. How can I assist you today?</div>
+        <div class="msg-bubble">Hello. This is the Volvo Enterprise AI Agent. I can answer questions from internal documents via the MCP tool server — all traffic is secured through Kong AI Gateway. Ask me anything!</div>
       </div>
     </div>
-    <div class="thinking" id="thinking">Evaluations Engine Running <div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div class="thinking" id="thinking">Agent thinking <div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
   </div>
 
   <div class="input-area">
     <div class="input-inner">
-      <input type="text" id="prompt-input" class="chat-input" placeholder="Enter your prompt here... (Try typing PII like a credit card number to test the firewall)" onkeydown="if(event.key==='Enter') sendPrompt()" />
+      <input type="text" id="prompt-input" class="chat-input"
+        placeholder="Ask anything — e.g. 'What are the public policies?' or 'List all files'"
+        onkeydown="if(event.key==='Enter') sendPrompt()" />
       <button class="chat-send" id="send-btn" onclick="sendPrompt()">SEND</button>
     </div>
   </div>
 </main>
 
+<!-- Pipeline Panel -->
 <div class="ppanel">
-  <!-- Status row -->
-  <div style="text-align:center; font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:2px; padding: 6px 0; border-bottom:1px solid var(--border);" id="ppstatus">GATEWAY SECURED</div>
-  <!-- Pipeline flow -->
-  <div class="pflow-scroll">
-    <div class="pflow">
+  <div id="ppstatus">GATEWAY SECURED — WAITING</div>
+
+  <!-- Main pipeline row -->
+  <div class="pipeline-wrap">
+    <div class="pipeline-main">
       <div class="stage" id="st-source">
         <div class="sbox"><div class="sico">💻</div><div class="slbl">Source</div></div>
-        <div class="sname">Employee UI</div>
+        <div class="sname">Browser</div>
       </div>
       <div class="conn" id="cn1"><div class="cline"></div><div class="pkt"></div></div>
-      <div class="stage kong-stage" id="st-kong">
-        <div class="sbox"><div class="sico">🛡️</div><div class="slbl">KONG GATEWAY</div></div>
+
+      <div class="stage wide" id="st-kong">
+        <div class="sbox"><div class="sico">🛡️</div><div class="slbl">Kong Gateway</div></div>
         <div class="sname">AI Firewall</div>
       </div>
       <div class="conn" id="cn2"><div class="cline"></div><div class="pkt"></div></div>
+
       <div class="stage" id="st-ai">
         <div class="sbox"><div class="sico">✨</div><div class="slbl">Gemini AI</div></div>
-        <div class="sname">Enterprise Model</div>
+        <div class="sname">LLM</div>
       </div>
       <div class="conn" id="cn3"><div class="cline"></div><div class="pkt"></div></div>
+
       <div class="stage" id="st-verdict">
         <div class="sbox"><div class="sico">📊</div><div class="slbl">Response</div></div>
         <div class="sname">Result</div>
       </div>
     </div>
-  </div>
-  
-  <!-- Plugins tracker -->
-  <div class="kvis-panel" id="kvis">
-    <div class="kvis">
-      <div class="kcat">
-        <div class="kcath">🛡️ Security & PII</div>
-        <div class="kvgrid1">
-          <div class="kp" id="kp-guard"><div class="kpdot"></div><div><div class="kpname">ai-prompt-guard</div><div class="kpact" id="ka-guard">Enforcing DLP Regex...</div></div></div>
-          <div class="kp" id="kp-pii"><div class="kpdot"></div><div><div class="kpname">ai-prompt-decorator</div><div class="kpact" id="ka-pii">Redacting System Data...</div></div></div>
+
+    <!-- MCP branch (shown when LLM invokes a tool) -->
+    <div class="mcp-branch" id="mcp-branch">
+      <div class="mcp-row" id="mcp-row">
+        <div class="mcp-label">MCP Branch</div>
+
+        <div class="stage" id="st-mcp-kong">
+          <div class="sbox"><div class="sico">🛡️</div><div class="slbl">Kong/MCP</div></div>
+          <div class="sname">Proxy</div>
         </div>
-      </div>
-      <div class="kcat">
-        <div class="kcath">🤖 AI Routing</div>
-        <div class="kvgrid1">
-          <div class="kp" id="kp-proxy"><div class="kpdot"></div><div><div class="kpname">ai-proxy</div><div class="kpact" id="ka-proxy">Forwarding securely...</div></div></div>
+        <div class="conn" id="cn-mcp1"><div class="cline"></div><div class="pkt"></div></div>
+
+        <div class="stage" id="st-mcp-server">
+          <div class="sbox"><div class="sico">🗄️</div><div class="slbl">MCP Server</div></div>
+          <div class="sname">Tool Exec</div>
         </div>
-      </div>
-      <div class="kcat">
-        <div class="kcath">📊 Observability</div>
-        <div class="kvgrid1">
-          <div class="kp" id="kp-log"><div class="kpdot"></div><div><div class="kpname">file-log</div><div class="kpact" id="ka-log">Writing GDPR audit log...</div></div></div>
-          <div class="kp" id="kp-rate"><div class="kpdot"></div><div><div class="kpname">rate-limiting</div><div class="kpact" id="ka-rate">Checking quota...</div></div></div>
+        <div class="conn" id="cn-mcp2"><div class="cline"></div><div class="pkt"></div></div>
+
+        <div class="stage" id="st-mcp-data">
+          <div class="sbox"><div class="sico">📂</div><div class="slbl">Data Files</div></div>
+          <div class="sname">Dataset</div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- Live step log -->
+  <div class="step-log" id="step-log"></div>
 </div>
 
 <script>
-function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
 function stageSet(id, cls) {
   const el = document.getElementById('st-' + id);
-  el.className = el.className.replace(/\s*st-(active|blocked|success|warn)/g, '').trim();
+  if (!el) return;
+  el.className = el.className.replace(/\s*st-(active|blocked|success|mcp|warn)/g, '').trim();
   if (cls) el.className += ' st-' + cls;
 }
-function connTravel(n, type) {
+
+function connTravel(id, type) {
   return new Promise(res => {
-    const el = document.getElementById('cn' + n);
-    el.classList.remove('c-active','c-blocked','c-travel');
-    el.classList.add('c-travel', type === 'blocked' ? 'c-blocked' : 'c-active');
-    setTimeout(() => { el.classList.remove('c-travel'); res(); }, 650);
+    const el = document.getElementById(id);
+    if (!el) { res(); return; }
+    el.classList.remove('c-active','c-blocked','c-travel','c-mcp','c-mcp-travel');
+    if (type === 'blocked') el.classList.add('c-travel','c-blocked');
+    else if (type === 'mcp') el.classList.add('c-mcp-travel','c-mcp');
+    else el.classList.add('c-travel','c-active');
+    setTimeout(() => { el.classList.remove('c-travel','c-mcp-travel'); res(); }, 620);
   });
 }
+
 function resetPipeline() {
-  ['source','kong','ai','verdict'].forEach(id => stageSet(id, null));
-  [1,2,3].forEach(n => document.getElementById('cn' + n).className = 'conn');
-  ['guard','pii','proxy','log','rate'].forEach(pid => {
-    const el = document.getElementById('kp-' + pid);
-    if(el) el.classList.remove('kp-ok','kp-blk');
+  ['source','kong','ai','verdict','mcp-kong','mcp-server','mcp-data'].forEach(id => stageSet(id, null));
+  ['cn1','cn2','cn3','cn-mcp1','cn-mcp2'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.className = 'conn';
   });
+  document.getElementById('mcp-branch').classList.remove('show');
+  document.getElementById('step-log').classList.remove('show');
+  document.getElementById('step-log').innerHTML = '';
   document.getElementById('st-kong').querySelector('.sico').textContent = '🛡️';
   document.getElementById('st-verdict').querySelector('.sico').textContent = '📊';
-  document.getElementById('kvis').classList.remove('show');
+  document.getElementById('ppstatus').textContent = 'GATEWAY SECURED — WAITING';
+}
+
+function addStep(msg, type='') {
+  const log = document.getElementById('step-log');
+  log.classList.add('show');
+  const line = document.createElement('div');
+  line.className = 'step-line ' + type;
+  const ts = new Date().toLocaleTimeString('en-GB', {hour12:false});
+  line.textContent = `[${ts}] ${msg}`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
 }
 
 function appendMsg(role, text, isBlocked=false) {
   const inner = document.getElementById('chatinner');
   const d = document.createElement('div');
-  d.className = 'msg-wrapper ' + (role.toLowerCase() === 'you' ? 'usermsg' : 'aimsg');
-  if(isBlocked) d.classList.add('blocked');
-  // Ensure multiline output formats properly
-  const formattedText = text.replace(/\\n/g, '<br/>');
-  d.innerHTML = `
-    <div class="msg-meta">${role}</div>
-    <div class="msg-bubble">${formattedText}</div>
-  `;
+  d.className = 'msg-wrapper ' + (role === 'You' ? 'usermsg' : 'aimsg');
+  if (isBlocked) d.classList.add('blocked');
+  d.innerHTML = `<div class="msg-meta">${role}</div><div class="msg-bubble">${text}</div>`;
   inner.appendChild(d);
-  document.getElementById('chatbox').scrollTop = document.getElementById('chatbox').scrollHeight;
+  document.getElementById('chatbox').scrollTop = 999999;
 }
 
 async function sendPrompt() {
   const input = document.getElementById('prompt-input');
   const txt = input.value.trim();
-  if(!txt) return;
+  if (!txt) return;
   input.value = '';
   document.getElementById('send-btn').disabled = true;
 
   appendMsg('You', txt);
   resetPipeline();
   document.getElementById('thinking').classList.add('show');
-  document.getElementById('chatbox').scrollTop = document.getElementById('chatbox').scrollHeight;
 
-  document.getElementById('kvis').classList.add('show');
-  
-  // Animate Source
-  document.getElementById('ppstatus').textContent = 'Sending prompt...';
+  // Animate: Source → Kong
   stageSet('source', 'active');
-  await wait(200);
-  await connTravel(1);
+  addStep('Prompt captured at browser', '');
+  await wait(150);
+  await connTravel('cn1', 'normal');
   stageSet('source', 'success');
-
-  // Animate Kong
   stageSet('kong', 'active');
-  document.getElementById('ppstatus').textContent = 'Kong AI Gateway — scanning for threats...';
-  await wait(400);
+  addStep('Kong AI Gateway — inspecting request...', 'kong');
+  document.getElementById('ppstatus').textContent = 'Kong AI Gateway — DLP scan active...';
 
   try {
-    const r = await fetch('/api/chat', {
-      method:'POST', headers:{'Content-Type':'application/json'},
+    const response = await fetch('/api/agent-chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({message: txt})
     });
-    const result = await r.json();
 
-    // Plugin animation
-    document.getElementById('kp-rate').classList.add('kp-ok');
-    document.getElementById('kp-pii').classList.add('kp-ok');
-    document.getElementById('kp-log').classList.add('kp-ok');
-    await wait(300);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    document.getElementById('thinking').classList.remove('show');
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
 
-    if(result.blocked) {
-      document.getElementById('kp-guard').classList.add('kp-blk');
-      document.getElementById('st-kong').querySelector('.sico').textContent = '🚫';
-      stageSet('kong', 'blocked');
-      document.getElementById('ppstatus').textContent = '⛔ KONG INTERCEPTED THREAT — Prompt stopped.';
-      document.getElementById('cn2').classList.add('c-blocked');
-      document.getElementById('cn3').classList.add('c-blocked');
-      appendMsg('Kong AI Firewall', result.message, true);
-    } else {
-      document.getElementById('kp-guard').classList.add('kp-ok');
-      document.getElementById('kp-proxy').classList.add('kp-ok');
-      stageSet('kong', 'success');
-      document.getElementById('ppstatus').textContent = '✓ Secure proxy via Kong — awaiting AI response...';
-      await connTravel(2);
+      // Parse SSE events from buffer
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop(); // keep incomplete chunk
 
-      // AI Responding
-      stageSet('ai', 'active');
-      await wait(600);
-      stageSet('ai', 'success');
-      await connTravel(3);
-      
-      stageSet('verdict', 'success');
-      document.getElementById('st-verdict').querySelector('.sico').textContent = '🟢';
-      document.getElementById('ppstatus').textContent = '✓ Request fulfilled safely (' + result.latency_ms + ' ms)';
-      
-      appendMsg('Gemini AI', result.message);
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        const lines = part.split('\n');
+        let eventType = 'message', data = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7);
+          if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (!data) continue;
+        const payload = JSON.parse(data);
+
+        if (eventType === 'step') {
+          const stage = payload.stage;
+          const msg = payload.msg;
+          addStep(msg, stage.startsWith('mcp') ? 'mcp' : stage === 'kong' || stage === 'kong_mcp' ? 'kong' : '');
+          document.getElementById('ppstatus').textContent = msg;
+
+          if (stage === 'mcp_discover') {
+            document.getElementById('mcp-branch').classList.add('show');
+          }
+          if (stage === 'mcp_call') {
+            stageSet('mcp-kong', 'mcp');
+            await connTravel('cn-mcp1', 'mcp');
+            stageSet('mcp-server', 'mcp');
+          }
+          if (stage === 'kong_mcp') {
+            await connTravel('cn-mcp1', 'mcp');
+          }
+          if (stage === 'mcp_result') {
+            await connTravel('cn-mcp2', 'mcp');
+            stageSet('mcp-data', 'mcp');
+          }
+          if (stage === 'kong') {
+            stageSet('kong', 'active');
+            await connTravel('cn2', 'normal');
+            stageSet('ai', 'active');
+          }
+          if (stage === 'ai') {
+            stageSet('ai', 'success');
+            await connTravel('cn3', 'normal');
+          }
+          if (stage === 'verdict') {
+            stageSet('verdict', 'success');
+            document.getElementById('st-verdict').querySelector('.sico').textContent = '🟢';
+          }
+        }
+
+        if (eventType === 'answer') {
+          document.getElementById('thinking').classList.remove('show');
+          stageSet('kong', 'success');
+          stageSet('verdict', 'success');
+          document.getElementById('ppstatus').textContent = '✓ Agent answered safely via Kong + MCP';
+          addStep('Final answer delivered ✓', 'ok');
+          appendMsg('Gemini + MCP Agent', payload.msg);
+        }
+
+        if (eventType === 'blocked') {
+          document.getElementById('thinking').classList.remove('show');
+          stageSet('kong', 'blocked');
+          document.getElementById('st-kong').querySelector('.sico').textContent = '🚫';
+          document.getElementById('ppstatus').textContent = '⛔ Kong blocked this request';
+          addStep(payload.msg, 'blk');
+          appendMsg('Kong AI Firewall', payload.msg, true);
+        }
+
+        if (eventType === 'error') {
+          document.getElementById('thinking').classList.remove('show');
+          document.getElementById('ppstatus').textContent = '✗ Error: ' + payload.msg;
+          addStep('Error: ' + payload.msg, 'blk');
+          appendMsg('System', '⚠ ' + payload.msg, true);
+        }
+      }
     }
   } catch(e) {
     document.getElementById('thinking').classList.remove('show');
-    document.getElementById('ppstatus').textContent = '✗ Error: ' + e.message;
-    appendMsg('System Error', 'Could not reach gateway: ' + e.message, true);
+    appendMsg('System Error', '⚠ ' + e.message, true);
   }
 
   document.getElementById('send-btn').disabled = false;

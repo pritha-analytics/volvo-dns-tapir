@@ -20,8 +20,11 @@ echo "Starting Docker Compose (Kong & Postgres)..."
 docker compose up -d || docker-compose up -d
 
 # 3. Configure Kong Plugins (wait for Kong to be healthy)
-echo "Configuring Kong Service and Plugins..."
+echo "Configuring Kong AI Service and LLM Plugins..."
 ./setup_kong.sh
+
+echo "Configuring Kong MCP Service and Route..."
+./setup_mcp_kong.sh
 
 echo "==========================================="
 echo "Infrastructure Ready. Starting Dashboard..."

@@ -22,9 +22,10 @@ done
 echo "Kong Admin API is up!"
 
 echo "Applying Kong Enterprise License..."
+LICENSE_CONTENT=$(cat "$KONG_LICENSE_PATH" | jq -c .)
 curl -i -X POST http://localhost:8001/licenses/ \
   --header "Content-Type: application/json" \
-  -d @"$KONG_LICENSE_PATH"
+  -d "{\"payload\": $(jq -Rs . <<< "$LICENSE_CONTENT")}"
 
 echo "Creating AI Service..."
 curl -i -X POST http://localhost:8001/services \
@@ -48,7 +49,7 @@ echo "Adding AI Prompt Decorator Plugin (PII Sanitizer)..."
 curl -i -X POST http://localhost:8001/services/openrouter-service/plugins \
   --data name=ai-prompt-decorator \
   --data "config.prompts.prepend[1].role=system" \
-  --data "config.prompts.prepend[1].content=You are a highly capable and friendly Enterprise AI assistant for Volvo Cars employees. You can help with code, analysis, general chat, and answering questions. You maintain a helpful, conversational tone while always keeping Volvo's enterprise security in mind."
+  --data "config.prompts.prepend[1].content=You are a highly capable and friendly Enterprise AI assistant for Volvo Cars team members. You can help with code, analysis, general chat, and answering questions. You maintain a helpful, conversational tone while always keeping Volvo's enterprise security in mind."
 
 echo "Adding Prompt Injection & DLP Guard Plugin (Strict PII/Confidentiality Blocking)..."
 curl -i -X POST http://localhost:8001/services/openrouter-service/plugins \
