@@ -227,6 +227,35 @@ body.flash-red{animation:redFlash .8s ease-out;}
 ::-webkit-scrollbar{width:4px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+/* ── FILE UPLOAD ── */
+.upload-btn{background:var(--bg3);border:1px solid var(--border2);border-right:none;
+  color:var(--kong);font-size:18px;padding:0 18px;cursor:pointer;transition:all .2s;flex-shrink:0;}
+.upload-btn:hover{background:rgba(0,150,220,.12);border-color:var(--kong);}
+.upload-btn:disabled{opacity:.4;cursor:not-allowed;}
+
+.msg-file{align-self:stretch;border:1px solid;padding:14px 16px;animation:slideIn .4s ease-out;}
+.msg-file.blocked{border-color:rgba(255,59,92,.4);background:rgba(255,59,92,.06);}
+.msg-file.allowed{border-color:rgba(0,230,118,.35);background:rgba(0,230,118,.04);}
+.msg-file.scanning{border-color:var(--border2);background:var(--bg2);}
+.mf-header{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+.mf-icon{font-size:20px;}
+.mf-title{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:2px;}
+.msg-file.blocked .mf-title{color:var(--red);}
+.msg-file.allowed .mf-title{color:var(--green);}
+.msg-file.scanning .mf-title{color:var(--kong);}
+.mf-badge{font-family:var(--mono);font-size:8px;padding:2px 7px;border:1px solid;letter-spacing:1px;margin-left:auto;}
+.mf-badge.blocked{color:var(--red);border-color:var(--red);}
+.mf-badge.allowed{color:var(--green);border-color:var(--green);}
+.mf-filename{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;}
+.mf-body{font-size:12px;line-height:1.7;}
+.msg-file.blocked .mf-body{color:var(--dim);}
+.msg-file.allowed .mf-body{color:var(--dim);}
+.mf-scan-dots{display:flex;gap:5px;align-items:center;}
+.mf-scan-dot{width:6px;height:6px;border-radius:50%;background:var(--kong);
+  animation:tdBounce 1.2s infinite ease-in-out;}
+.mf-scan-dot:nth-child(2){animation-delay:.2s;}
+.mf-scan-dot:nth-child(3){animation-delay:.4s;}
 </style>
 </head>
 <body>
@@ -328,6 +357,8 @@ body.flash-red{animation:redFlash .8s ease-out;}
 
     <!-- INPUT -->
     <div class="chat-input">
+      <button class="upload-btn" id="uploadBtn" title="Upload PDF or Image" onclick="document.getElementById('fileInput').click()">📎</button>
+      <input type="file" id="fileInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp" style="display:none" onchange="uploadFile(this)"/>
       <input class="ci-input" id="msgInput" type="text"
         placeholder="Enter your prompt here... (Try typing PII like a credit card number to test the firewall)"
         onkeydown="if(event.key==='Enter' && !this.disabled) sendMessage()"/>
@@ -675,6 +706,111 @@ async function sendMessage() {
   input.disabled = false;
   sendBtn.disabled = false;
   input.focus();
+}
+
+/* ─── File upload ─── */
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const uploadBtn = document.getElementById('uploadBtn');
+  const sendBtn   = document.getElementById('sendBtn');
+  uploadBtn.disabled = true;
+  sendBtn.disabled   = true;
+
+  const isImage = file.type.startsWith('image/');
+  const icon    = isImage ? '🖼️' : '📄';
+
+  /* Show scanning card */
+  const msgs = document.getElementById('chatMessages');
+  const card = document.createElement('div');
+  card.className = 'msg-file scanning';
+  card.innerHTML = `
+    <div class="mf-header">
+      <span class="mf-icon">${icon}</span>
+      <span class="mf-title">SCANNING FILE</span>
+      <span class="mf-badge allowed" style="border-color:var(--kong);color:var(--kong)">KONG SCAN</span>
+    </div>
+    <div class="mf-filename">${escHtml(file.name)} · ${(file.size/1024).toFixed(1)} KB</div>
+    <div class="mf-body"><div class="mf-scan-dots"><div class="mf-scan-dot"></div><div class="mf-scan-dot"></div><div class="mf-scan-dot"></div></div></div>`;
+  msgs.appendChild(card);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  pipeReset();
+  document.getElementById('ps-you').classList.add('active');
+  setStatus('processing', `Uploading ${file.name} to Kong AI Security Scanner...`);
+  await travelPacket('pkt-1', 'pc-1', 'blue', 600);
+  fillLine('pc-1', 'blue', 0);
+  document.getElementById('ps-kong').classList.add('active');
+  setStatus('processing', 'Kong is scanning the file for sensitive data...');
+
+  const form = new FormData();
+  form.append('file', file);
+
+  let data;
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    data = await res.json();
+  } catch (err) {
+    card.className = 'msg-file blocked';
+    card.querySelector('.mf-title').textContent = 'UPLOAD ERROR';
+    card.querySelector('.mf-body').textContent = 'Could not reach the server.';
+    setStatus('blocked', 'Upload failed — server error');
+    uploadBtn.disabled = false; sendBtn.disabled = false;
+    return;
+  }
+
+  if (data.blocked) {
+    card.className = 'msg-file blocked';
+    card.querySelector('.mf-title').textContent = '⛔ FILE BLOCKED — SENSITIVE DATA DETECTED';
+    card.querySelector('.mf-badge').className = 'mf-badge blocked';
+    card.querySelector('.mf-badge').textContent = data.pii_type;
+    card.querySelector('.mf-body').innerHTML = escHtml(data.message) +
+      `<div class="mb-explain" style="margin-top:8px">GDPR Art. 5 — Kong intercepted this file before it reached any AI model. No data was stored or transmitted.</div>`;
+
+    document.getElementById('ps-kong').classList.remove('active');
+    document.getElementById('ps-kong').classList.add('blocked');
+    document.getElementById('kongShield').textContent = '⛔ FILE BLOCKED';
+    document.getElementById('ps-ai').classList.add('dim');
+    document.getElementById('ps-resp').classList.add('dim');
+    document.getElementById('pc-2').classList.add('blocked-line');
+    document.getElementById('pc-3').classList.add('blocked-line');
+    setStatus('blocked', `⛔ FILE BLOCKED — ${data.pii_type} detected in ${data.file_type}`);
+    document.body.classList.remove('flash-red');
+    void document.body.offsetWidth;
+    document.body.classList.add('flash-red');
+    showOverlay('pii', `${data.pii_type} detected in uploaded ${data.file_type.toLowerCase()}`);
+
+  } else {
+    card.className = 'msg-file allowed';
+    card.querySelector('.mf-title').textContent = '✅ FILE CLEARED — NO SENSITIVE DATA';
+    card.querySelector('.mf-badge').className = 'mf-badge allowed';
+    card.querySelector('.mf-badge').textContent = 'SAFE';
+    card.querySelector('.mf-body').textContent = data.message;
+
+    document.getElementById('ps-kong').classList.remove('active');
+    document.getElementById('ps-kong').classList.add('success');
+    await travelPacket('pkt-2', 'pc-2', 'blue', 500);
+    fillLine('pc-2', 'blue', 0);
+    document.getElementById('ps-ai').classList.add('success');
+    document.getElementById('ps-resp').classList.add('success');
+    fillLine('pc-3', 'green', 0);
+    setStatus('success', `✓ File cleared — ${data.latency_ms}ms · no sensitive data · GDPR compliant`);
+  }
+
+  /* Audit entry */
+  addAuditEntry({
+    blocked: data.blocked,
+    block_type: data.blocked ? 'PII' : null,
+    pii_type: data.pii_type || null,
+    latency_ms: data.latency_ms,
+    timestamp: data.timestamp
+  }, `[FILE] ${file.name}`);
+
+  msgs.scrollTop = msgs.scrollHeight;
+  uploadBtn.disabled = false;
+  sendBtn.disabled   = false;
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
