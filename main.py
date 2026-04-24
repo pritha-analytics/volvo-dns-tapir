@@ -31,7 +31,7 @@ app.add_middleware(
 KONG_URL = "http://localhost:8000/ai"
 GEMINI_MODEL = "google/gemini-2.0-flash-lite-001"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY = "REDACTED_API_KEY"
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
 ALLOWED_UPLOAD_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 DEMO_RESPONSES = [
