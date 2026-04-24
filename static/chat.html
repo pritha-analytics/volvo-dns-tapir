@@ -228,6 +228,12 @@ body.flash-red{animation:redFlash .8s ease-out;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
 
+/* ── DLP mask banners ── */
+.dlp-banner{font-family:var(--mono);font-size:9px;letter-spacing:.5px;
+  padding:5px 10px;margin-bottom:6px;border-left:3px solid;}
+.dlp-banner.input-mask{color:var(--orange);border-color:var(--orange);background:rgba(255,136,0,.07);}
+.dlp-banner.output-mask{color:var(--purple);border-color:var(--purple);background:rgba(199,125,255,.07);}
+
 /* ── FILE UPLOAD ── */
 .upload-btn{background:var(--bg3);border:1px solid var(--border2);border-right:none;
   color:var(--kong);font-size:18px;padding:0 18px;cursor:pointer;transition:all .2s;flex-shrink:0;}
@@ -518,16 +524,26 @@ function addThinkingMsg() {
   return wrap;
 }
 
-function addAiMsg(text, latency, tokens) {
+function addAiMsg(text, latency, tokens, inputMasked, outputMasked) {
   const old = document.getElementById('thinkingMsg');
   if (old) old.remove();
   const msgs = document.getElementById('chatMessages');
   const wrap = document.createElement('div');
   wrap.className = 'msg-wrap ai';
+
+  let maskBanner = '';
+  if (inputMasked && inputMasked.length) {
+    maskBanner += `<div class="dlp-banner input-mask">🛡️ Kong DLP masked from your prompt: <strong>${inputMasked.join(', ')}</strong> — AI never saw the raw data</div>`;
+  }
+  if (outputMasked && outputMasked.length) {
+    maskBanner += `<div class="dlp-banner output-mask">🔍 Kong DLP masked from AI response: <strong>${outputMasked.join(', ')}</strong> — sensitive data redacted before delivery</div>`;
+  }
+
   wrap.innerHTML = `
     <div class="msg-sender">AI RESPONSE — via Kong AI Gateway</div>
+    ${maskBanner}
     <div class="msg-bubble">${escHtml(text)}</div>
-    <div class="msg-meta">${now()} · ${latency}ms · ${tokens} tokens · PII redacted by Kong</div>`;
+    <div class="msg-meta">${now()} · ${latency}ms · ${tokens} tokens · Volvo DLP enforced</div>`;
   msgs.appendChild(wrap);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -540,9 +556,12 @@ function addBlockedMsg(data) {
   el.className = 'msg-blocked';
 
   const typeLabels = {
-    PII: { badge: 'PII BLOCKED', badgeClass: 'pii', explain: 'This message contained sensitive personal information. Kong stopped it before it reached the AI — the data was never transmitted, stored, or processed.' },
-    INJECTION: { badge: 'INJECTION BLOCKED', badgeClass: 'injection', explain: 'This message matched known AI manipulation patterns (jailbreak / prompt injection). Kong\'s AI Firewall intercepted it to protect Volvo\'s AI systems from misuse.' },
-    RATE_LIMIT: { badge: 'RATE LIMITED', badgeClass: 'rate', explain: 'Kong\'s rate limiter has temporarily blocked further requests to prevent abuse. Please wait 60 seconds.' }
+    PII:          { badge: 'PII BLOCKED',         badgeClass: 'pii',       explain: 'This message contained sensitive personal information (email, VIN, phone, etc.). Kong DLP stopped it before it reached the AI — the data was never transmitted, stored, or processed.' },
+    DLP_BLOCK:    { badge: 'DLP POLICY BLOCK',    badgeClass: 'pii',       explain: 'This request was blocked by Volvo\'s Enterprise DLP policy. The data class (GPS, JWT, credit card, or sensitive query) is prohibited from AI processing under Volvo data governance rules.' },
+    CORRELATION:  { badge: 'HIGH-RISK CORRELATION', badgeClass: 'injection', explain: 'Kong detected a high-risk data combination: VIN + personal identity + GPS location. Combining these fields creates a GDPR Article 9 violation. Request blocked before reaching the AI.' },
+    OUTPUT_BLOCKED: { badge: 'OUTPUT SUPPRESSED', badgeClass: 'injection', explain: 'The AI model returned a response containing sensitive data. Kong\'s Output DLP Guard intercepted and suppressed it before it reached you.' },
+    INJECTION:    { badge: 'INJECTION BLOCKED',   badgeClass: 'injection', explain: 'This message matched known AI manipulation patterns (jailbreak / prompt injection). Kong\'s AI Firewall intercepted it to protect Volvo\'s AI systems from misuse.' },
+    RATE_LIMIT:   { badge: 'RATE LIMITED',         badgeClass: 'rate',      explain: 'Kong\'s rate limiter has temporarily blocked further requests to prevent abuse. Please wait 60 seconds.' }
   };
   const info = typeLabels[data.block_type] || typeLabels['INJECTION'];
 
@@ -570,13 +589,34 @@ function addAuditEntry(data, userText) {
   let dotClass, typeClass, typeText, desc, tags;
 
   if (!data.blocked) {
-    dotClass  = 'allowed'; typeClass = 'allowed'; typeText = 'ALLOWED';
-    desc      = 'Message passed all Kong checks and received AI response.';
-    tags      = [`${data.latency_ms}ms`, `${data.tokens} tokens`, 'PII redacted', 'GDPR Art.5'];
+    const hasMask = (data.input_masked && data.input_masked.length) || (data.output_masked && data.output_masked.length);
+    if (hasMask) {
+      dotClass  = 'pii'; typeClass = 'pii'; typeText = 'PII MASKED & DELIVERED';
+      const im  = (data.input_masked  || []).join(', ') || '—';
+      const om  = (data.output_masked || []).join(', ') || 'none';
+      desc      = `Input masked: ${im}. Output masked: ${om}.`;
+      tags      = [`${data.latency_ms}ms`, `${data.tokens} tokens`, 'GDPR Art.5', 'DLP enforced'];
+    } else {
+      dotClass  = 'allowed'; typeClass = 'allowed'; typeText = 'ALLOWED';
+      desc      = 'Message passed all Kong DLP checks and received AI response.';
+      tags      = [`${data.latency_ms}ms`, `${data.tokens} tokens`, 'Volvo DLP clear', 'GDPR Art.5'];
+    }
   } else if (data.block_type === 'PII') {
     dotClass  = 'pii'; typeClass = 'pii'; typeText = 'PII BLOCKED';
-    desc      = `${data.pii_type} detected and stopped at Kong firewall.`;
+    desc      = `${data.pii_type} detected and stopped at Kong DLP firewall.`;
     tags      = ['Data never sent', 'GDPR Art.5', 'Kong DLP', '0 tokens used'];
+  } else if (data.block_type === 'DLP_BLOCK') {
+    dotClass  = 'pii'; typeClass = 'pii'; typeText = 'DLP POLICY BLOCK';
+    desc      = `Blocked: ${data.pii_type || 'sensitive data class'} — prohibited by Volvo DLP policy.`;
+    tags      = ['GPS / JWT / CC / Secret', 'GDPR Art.9', 'Kong DLP', '0 tokens used'];
+  } else if (data.block_type === 'CORRELATION') {
+    dotClass  = 'inject'; typeClass = 'inject'; typeText = 'CORRELATION BLOCK';
+    desc      = 'High-risk data correlation: VIN + identity + GPS blocked (GDPR Art.9).';
+    tags      = ['High-risk combo', 'GDPR Art.9', 'Kong DLP', 'Escalated'];
+  } else if (data.block_type === 'OUTPUT_BLOCKED') {
+    dotClass  = 'inject'; typeClass = 'inject'; typeText = 'OUTPUT SUPPRESSED';
+    desc      = `AI response contained ${data.pii_type || 'sensitive data'} — suppressed by Kong Output Guard.`;
+    tags      = ['Output scanned', 'Response suppressed', 'GDPR Art.5'];
   } else if (data.block_type === 'INJECTION') {
     dotClass  = 'inject'; typeClass = 'inject'; typeText = 'INJECTION BLOCKED';
     desc      = 'Prompt injection / jailbreak attempt intercepted by Kong AI Guard.';
@@ -616,96 +656,121 @@ async function sendMessage() {
   input.disabled = true;
   sendBtn.disabled = true;
 
-  pipeReset();
-  addUserMsg(text);
-
-  /* Step 1: YOU → active, packet travels to Kong */
-  document.getElementById('ps-you').classList.add('active');
-  setStatus('processing', 'Sending request to Kong AI Firewall...');
-  await travelPacket('pkt-1', 'pc-1', 'blue', 600);
-  fillLine('pc-1', 'blue', 0);
-
-  /* Step 2: Kong checking */
-  document.getElementById('ps-kong').classList.add('active');
-  setStatus('processing', 'Kong AI Firewall is inspecting the request...');
-  await sleep(500);
-
-  let data;
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: text})
-    });
-    data = await res.json();
+    pipeReset();
+    addUserMsg(text);
+
+    /* Step 1: YOU → active, packet travels to Kong */
+    document.getElementById('ps-you').classList.add('active');
+    setStatus('processing', 'Sending request to Kong AI Firewall...');
+    await travelPacket('pkt-1', 'pc-1', 'blue', 600);
+    fillLine('pc-1', 'blue', 0);
+
+    /* Step 2: Kong checking */
+    document.getElementById('ps-kong').classList.add('active');
+    setStatus('processing', 'Kong AI Firewall is inspecting the request...');
+    await sleep(500);
+
+    let res, data;
+    try {
+      res  = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: text})
+      });
+      data = await res.json();
+    } catch (err) {
+      setStatus('blocked', 'Connection error — is the server running?');
+      return;
+    }
+
+    /* Handle server-side errors (4xx/5xx with no blocked field) */
+    if (!res.ok || data.detail) {
+      const errMsg = data.detail || `Server error ${res.status}`;
+      document.getElementById('ps-kong').classList.remove('active');
+      document.getElementById('ps-kong').classList.add('blocked');
+      document.getElementById('kongShield').textContent = '⚠ SERVER ERROR';
+      document.getElementById('ps-ai').classList.add('dim');
+      document.getElementById('ps-resp').classList.add('dim');
+      document.getElementById('pc-2').classList.add('blocked-line');
+      document.getElementById('pc-3').classList.add('blocked-line');
+      setStatus('blocked', `Server error — ${errMsg}`);
+      const msgs = document.getElementById('chatMessages');
+      const errEl = document.createElement('div');
+      errEl.className = 'msg-system';
+      errEl.textContent = `⚠ Error: ${errMsg}`;
+      msgs.appendChild(errEl);
+      msgs.scrollTop = msgs.scrollHeight;
+      return;
+    }
+
+    if (data.blocked) {
+      /* ── BLOCKED PATH ── */
+      document.getElementById('ps-kong').classList.remove('active');
+      document.getElementById('ps-kong').classList.add('blocked');
+      document.getElementById('kongShield').textContent =
+        data.block_type === 'PII' ? '⛔ PII BLOCKED' :
+        data.block_type === 'RATE_LIMIT' ? '⏱ RATE LIMITED' : '⛔ ATTACK BLOCKED';
+
+      /* Dim unreached stages */
+      document.getElementById('ps-ai').classList.add('dim');
+      document.getElementById('ps-resp').classList.add('dim');
+      document.getElementById('pc-2').classList.add('blocked-line');
+      document.getElementById('pc-3').classList.add('blocked-line');
+
+      const statusMsg =
+        data.block_type === 'PII'       ? `🛡️ KONG INTERCEPTED — ${data.pii_type} blocked` :
+        data.block_type === 'INJECTION' ? '⛔ KONG INTERCEPTED — Manipulation attempt blocked' :
+                                          '⏱ KONG INTERCEPTED — Rate limit exceeded';
+      setStatus('blocked', statusMsg);
+
+      await sleep(200);
+      showOverlay(data.block_type === 'INJECTION' ? 'injection' : 'pii',
+        data.block_type === 'PII' ? `${data.pii_type} detected and blocked` :
+        data.block_type === 'RATE_LIMIT' ? 'Too many requests — slow down' :
+        'Prompt injection / jailbreak attempt stopped');
+
+      addBlockedMsg(data);
+      addAuditEntry(data, text);
+
+    } else {
+      /* ── ALLOWED PATH ── */
+      document.getElementById('ps-kong').classList.remove('active');
+      document.getElementById('ps-kong').classList.add('success');
+      setStatus('processing', 'Kong checks passed — routing to Gemini Flash...');
+      await sleep(300);
+
+      /* Packet: Kong → AI */
+      await travelPacket('pkt-2', 'pc-2', 'blue', 600);
+      fillLine('pc-2', 'blue', 0);
+      document.getElementById('ps-ai').classList.add('active');
+      setStatus('processing', 'AI model is generating response...');
+
+      addThinkingMsg();
+
+      /* Packet: AI → Response (travels while AI is thinking) */
+      await sleep(400);
+      await travelPacket('pkt-3', 'pc-3', 'green', 700);
+      fillLine('pc-3', 'green', 0);
+      document.getElementById('ps-ai').classList.remove('active');
+      document.getElementById('ps-ai').classList.add('success');
+      document.getElementById('ps-resp').classList.add('success');
+
+      setStatus('success', `✓ Response delivered — ${data.latency_ms}ms · ${data.tokens} tokens · PII redacted by Kong`);
+
+      addAiMsg(data.response || '(no response)', data.latency_ms || 0, data.tokens || 0, data.input_masked, data.output_masked);
+      addAuditEntry(data, text);
+    }
+
   } catch (err) {
-    setStatus('blocked', 'Connection error — is the server running?');
-    busy = false; input.disabled = false; sendBtn.disabled = false;
-    return;
+    setStatus('blocked', 'Unexpected error — please try again');
+    console.error('sendMessage error:', err);
+  } finally {
+    busy = false;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    input.focus();
   }
-
-  if (data.blocked) {
-    /* ── BLOCKED PATH ── */
-    document.getElementById('ps-kong').classList.remove('active');
-    document.getElementById('ps-kong').classList.add('blocked');
-    document.getElementById('kongShield').textContent =
-      data.block_type === 'PII' ? '⛔ PII BLOCKED' :
-      data.block_type === 'RATE_LIMIT' ? '⏱ RATE LIMITED' : '⛔ ATTACK BLOCKED';
-
-    /* Dim unreached stages */
-    document.getElementById('ps-ai').classList.add('dim');
-    document.getElementById('ps-resp').classList.add('dim');
-    document.getElementById('pc-2').classList.add('blocked-line');
-    document.getElementById('pc-3').classList.add('blocked-line');
-
-    const statusMsg =
-      data.block_type === 'PII'       ? `🛡️ KONG INTERCEPTED — ${data.pii_type} blocked` :
-      data.block_type === 'INJECTION' ? '⛔ KONG INTERCEPTED — Manipulation attempt blocked' :
-                                        '⏱ KONG INTERCEPTED — Rate limit exceeded';
-    setStatus('blocked', statusMsg);
-
-    await sleep(200);
-    showOverlay(data.block_type === 'INJECTION' ? 'injection' : 'pii',
-      data.block_type === 'PII' ? `${data.pii_type} detected and blocked` :
-      data.block_type === 'RATE_LIMIT' ? 'Too many requests — slow down' :
-      'Prompt injection / jailbreak attempt stopped');
-
-    addBlockedMsg(data);
-    addAuditEntry(data, text);
-
-  } else {
-    /* ── ALLOWED PATH ── */
-    document.getElementById('ps-kong').classList.remove('active');
-    document.getElementById('ps-kong').classList.add('success');
-    setStatus('processing', 'Kong checks passed — routing to Gemini Flash...');
-    await sleep(300);
-
-    /* Packet: Kong → AI */
-    await travelPacket('pkt-2', 'pc-2', 'blue', 600);
-    fillLine('pc-2', 'blue', 0);
-    document.getElementById('ps-ai').classList.add('active');
-    setStatus('processing', 'AI model is generating response...');
-
-    const thinking = addThinkingMsg();
-
-    /* Packet: AI → Response (travels while AI is thinking) */
-    await sleep(400);
-    await travelPacket('pkt-3', 'pc-3', 'green', 700);
-    fillLine('pc-3', 'green', 0);
-    document.getElementById('ps-ai').classList.remove('active');
-    document.getElementById('ps-ai').classList.add('success');
-    document.getElementById('ps-resp').classList.add('success');
-
-    setStatus('success', `✓ Response delivered — ${data.latency_ms}ms · ${data.tokens} tokens · PII redacted by Kong`);
-
-    addAiMsg(data.response, data.latency_ms, data.tokens);
-    addAuditEntry(data, text);
-  }
-
-  busy = false;
-  input.disabled = false;
-  sendBtn.disabled = false;
-  input.focus();
 }
 
 /* ─── File upload ─── */

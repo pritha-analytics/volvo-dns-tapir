@@ -1,0 +1,39 @@
+version: "3.9"
+
+# One-time setup (already done):
+#   docker login docker.cloudsmith.io --username "kong/ai-pii" --password 7B4xGm6YONpejnhA
+#   docker pull docker.cloudsmith.io/kong/ai-pii/service:v0.1.4-en
+#
+# Start the stack:
+#   docker compose up -d
+
+services:
+  # ── AI PII Anonymizer sidecar ─────────────────────────────────────────────
+  # Runs the NLP entity-detection model on port 8080.
+  # Kong's ai-sanitizer plugin forwards request bodies here before sending to Gemini.
+  ai-pii:
+    image: docker.cloudsmith.io/kong/ai-pii/service:v0.1.4-en
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # ── Kong DB-less gateway ──────────────────────────────────────────────────
+  kong:
+    image: kong/kong-gateway:3.9
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yaml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    volumes:
+      - ./kong.yaml:/etc/kong/kong.yaml:ro
+    depends_on:
+      - ai-pii
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
