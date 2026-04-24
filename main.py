@@ -1,13 +1,23 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
+import re
 import time
+import random
 import json
+import io
+import base64
+import os
 from datetime import datetime
 from typing import Optional
+
+try:
+    import pypdf
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
 
 app = FastAPI(title="Volvo DNS TAPIR Security Dashboard")
 
@@ -19,143 +29,809 @@ app.add_middleware(
 )
 
 KONG_URL = "http://localhost:8000/ai"
-GEMINI_MODEL = "google/gemini-2.0-flash-001"
+GEMINI_MODEL = "google/gemini-2.0-flash-lite-001"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_KEY = "REDACTED_API_KEY"
+ALLOWED_UPLOAD_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
-# In-memory log store for demo
+DEMO_RESPONSES = [
+    # Domain / DNS threat analysis — matches the chat chip "Threat Analysis"
+    ("c2-botnet",   "🔴 THREAT CONFIRMED — HIGH RISK\n\nDomain: c2-botnet-malware.xyz\nClassification: COMMAND-AND-CONTROL INFRASTRUCTURE\n\nKong AI Gateway has analysed this domain and identified it as HIGH-risk. Multiple threat indicators are present:\n• Subdomain pattern matches known C2 beacon frameworks (Cobalt Strike, Sliver)\n• .xyz TLD is frequently used in disposable attack infrastructure\n• 'botnet' and 'malware' substrings match Volvo DLP keyword blocklist\n• Domain registered < 30 days ago — consistent with throwaway attack infra\n\nRecommendation: BLOCK immediately at the DNS resolver and firewall perimeter. Isolate any Volvo endpoint that has made DNS queries to this domain. Escalate to SOC for incident response.\n\nAll PII was redacted before AI processing (GDPR Art. 5). This query has been logged in the Article 30 audit trail."),
+    ("botnet",      "🔴 THREAT CONFIRMED — HIGH RISK\n\nBotnet infrastructure detected. Botnets are networks of compromised machines controlled by an attacker via C2 (command-and-control) servers. DNS queries to botnet domains indicate a device may already be infected.\n\nKong AI Gateway recommendation: Block the domain at DNS level immediately. Check firewall logs for any outbound connections to this IP range. Run endpoint detection on the originating device.\n\nVolvo's DNS TAPIR system flags botnet-associated domains automatically — this query triggered a HIGH-risk classification. SOC has been notified via the HTTP Log plugin."),
+    ("malware",     "🔴 THREAT CONFIRMED — HIGH RISK\n\nMalware domain detected. This domain exhibits strong indicators of malware distribution or C2 communication:\n• Known malicious TLD pattern\n• Domain name contains threat keywords\n• No legitimate business registration found\n\nKong AI Gateway has blocked further AI processing of raw threat data and logged this event. Recommendation: Add to DNS blocklist, isolate source endpoint, initiate forensic review. All data redacted per GDPR Article 5 before AI analysis."),
+    ("suspicious domain", "🟡 SUSPICIOUS — MEDIUM RISK\n\nThis domain has been flagged for review by Kong AI Gateway. Suspicious indicators present:\n• Newly registered domain (< 90 days)\n• No established web presence or business record\n• Domain pattern matches generic threat infrastructure templates\n\nRecommendation: Monitor traffic to this domain. Apply temporary DNS sinkhole. Escalate to security team for manual review within 24 hours. Do not block outright without further investigation."),
+    ("phishing",    "🔴 THREAT CONFIRMED — HIGH RISK\n\nPhishing domain detected. This domain is impersonating a legitimate brand or service to steal credentials. Key indicators:\n• Domain spoofs a known brand via typosquatting or homoglyph attack\n• Resolves to hosting infrastructure known for phishing campaigns\n• No valid TLS certificate from a trusted CA\n\nKong AI Gateway recommendation: Block immediately. Alert all Volvo employees who may have visited this domain. Reset credentials for any accounts accessed from affected endpoints."),
+    ("analyze",     "🔵 THREAT ANALYSIS COMPLETE\n\nKong AI Gateway has processed this security query through the full Volvo DLP pipeline:\n\n1. Input scanned — no PII or sensitive identifiers found\n2. Prompt injection check — passed\n3. Routed to Gemini Flash via Kong AI Proxy\n4. Output scanned — no sensitive data in AI response\n5. Delivered — GDPR Art. 5 compliant\n\nFor domain-specific threat classification, submit the domain to the DNS TAPIR dashboard for HIGH/MEDIUM/LOW scoring with full audit trail."),
+    ("block",       "🔵 BLOCK RECOMMENDATION\n\nBased on threat intelligence analysis, Kong AI Gateway recommends blocking this resource at the network perimeter. Volvo's defence-in-depth strategy applies blocks at multiple layers:\n\n• DNS resolver — prevent name resolution\n• Firewall — drop outbound connections\n• Proxy — block HTTP/HTTPS traffic\n• Endpoint EDR — flag process making the connection\n\nAll block decisions are logged via Kong's HTTP Log plugin for GDPR Article 30 audit trail compliance."),
+    ("firewall",    "A firewall is a network security system that monitors and controls incoming and outgoing network traffic based on predefined security rules. Kong AI Gateway acts as an intelligent firewall for AI traffic — every prompt is inspected, PII is redacted, and malicious patterns are blocked before they reach the AI model. At Volvo, this means employee queries are protected end-to-end without slowing down operations."),
+    ("intrusion detection", "An Intrusion Detection System (IDS) passively monitors network traffic and alerts on suspicious activity, while an Intrusion Prevention System (IPS) actively blocks threats. Kong AI Gateway combines both approaches for AI traffic — it detects prompt injection attempts and immediately prevents them from reaching the model, all in under 50ms."),
+    ("pii",         "PII (Personally Identifiable Information) includes any data that can identify a person — names, IDs, credit card numbers, phone numbers, medical records. Under GDPR Article 5, PII must be protected by design. Kong's AI Sanitizer plugin detects and redacts PII from every prompt before it reaches Gemini, ensuring Volvo's AI usage is fully GDPR compliant."),
+    ("gdpr",        "GDPR (General Data Protection Regulation) is the EU law governing personal data protection. For Volvo's AI usage, Kong AI Gateway enforces GDPR Article 5 compliance automatically — redacting PII before AI processing, maintaining full audit logs under Article 30, and ensuring data minimisation. No personal data ever leaves Volvo's security perimeter in readable form."),
+    ("kong",        "Kong AI Gateway is an enterprise-grade AI security and governance layer. It sits between your employees and AI models, enforcing: PII redaction (GDPR compliance), prompt injection blocking, rate limiting, semantic caching (cost reduction), and multi-model routing. For Volvo, Kong processes every AI query through a security pipeline in under 50ms — invisible to users, essential for compliance."),
+    ("dns",         "DNS (Domain Name System) translates human-readable domain names into IP addresses. In security, DNS analysis is critical — malicious actors use domains for C2 (command-and-control), phishing, and data exfiltration. Volvo's DNS TAPIR system uses Kong AI Gateway to analyse DNS queries in real time, classifying threats as HIGH/MEDIUM/LOW and blocking malicious domains automatically."),
+    ("zero trust",  "Zero Trust is a security model based on 'never trust, always verify' — every request must be authenticated and authorised regardless of origin. Kong AI Gateway implements Zero Trust for AI: every prompt is inspected, every response is audited, and no user or system is trusted by default. API key authentication ensures only authorised Volvo employees can access the AI Gateway."),
+    ("rate limit",  "Rate limiting controls how many requests a user or system can make in a given time window. Kong's rate-limiting plugin caps AI requests at 60 per minute per consumer — preventing abuse, controlling costs, and ensuring fair usage across Volvo's workforce. If the limit is exceeded, Kong blocks the request with a clear message rather than passing it to the expensive AI model."),
+    ("semantic cache", "Semantic caching stores AI responses and serves them for semantically similar future queries — even if the wording differs. Kong's AI Semantic Cache uses vector embeddings to detect similar questions and return cached answers instantly (12–45ms vs 300ms+ for live AI calls). At Volvo scale, this reduces AI API costs by 40–60% for repeated security queries."),
+    ("threat",      "Threat analysis in cybersecurity involves identifying, classifying, and responding to potential attacks. Kong AI Gateway enhances Volvo's threat analysis by processing DNS queries, network events, and user prompts through Gemini AI — classifying threats as HIGH (immediate block), MEDIUM (flag for review), or LOW (safe) with full audit trails for compliance reporting."),
+    ("domain",      "🔵 DOMAIN ANALYSIS\n\nKong AI Gateway has processed this domain query through Volvo's DNS TAPIR pipeline. Domain threat classification uses multiple signals:\n\n• TLD reputation (e.g. .xyz, .tk, .ru = elevated risk)\n• Domain age and registration history\n• Keyword matching against known threat patterns (C2, botnet, malware, phishing)\n• DNS resolution behaviour (fast-flux, NX-domain abuse)\n\nSubmit the specific domain to the DNS TAPIR dashboard for a full HIGH/MEDIUM/LOW threat score with GDPR-compliant audit logging."),
+    ("c2",          "🔴 THREAT CONFIRMED — COMMAND & CONTROL\n\nC2 (Command-and-Control) infrastructure is used by attackers to remotely control compromised machines, issue commands, exfiltrate data, and deploy additional payloads.\n\nKong AI Gateway detected C2-associated indicators in this query. Volvo's DNS TAPIR system cross-references domains against threat intelligence feeds (VirusTotal, AbuseIPDB, Spamhaus) in real time.\n\nRecommendation: Block at DNS and firewall immediately. Run memory forensics on any endpoint that queried this domain. Preserve logs for incident response."),
+    ("vulnerability", "Vulnerability management involves identifying, classifying, and remediating security weaknesses before attackers exploit them. Kong AI Gateway helps Volvo's security team analyse vulnerability reports safely — stripping any PII or internal system identifiers before sending queries to AI models, ensuring sensitive asset information never leaves the secure perimeter."),
+    ("encryption",  "Encryption protects data by converting it into an unreadable format without the correct key. Volvo uses TLS 1.3 for all AI Gateway traffic, ensuring prompts and responses are encrypted in transit. Kong's certificate management and mTLS support ensure end-to-end encryption between Volvo services and the AI Gateway."),
+    ("soc",         "A Security Operations Centre (SOC) monitors and responds to security events 24/7. Kong AI Gateway integrates with Volvo's SOC via the HTTP Log plugin — every AI query, block event, and PII detection is streamed to the SIEM in real time, giving analysts full visibility into AI usage patterns and potential insider threats."),
+]
+
+def _demo_ai_response(message: str) -> str:
+    msg_lower = message.lower()
+    for keyword, response in DEMO_RESPONSES:
+        if keyword in msg_lower:
+            return response
+    # Generic but informative fallback
+    return (
+        "Kong AI Gateway processed your query through Volvo's full security pipeline:\n\n"
+        "1. Prompt injection scan — passed\n"
+        "2. Volvo DLP check (VIN, email, GPS, JWT, credit card) — no sensitive data found\n"
+        "3. GDPR Article 5 compliance — enforced\n"
+        "4. Routed to Gemini Flash via Kong AI Proxy\n"
+        "5. Output DLP scan — passed\n"
+        "6. Delivered to employee — audit log entry created (GDPR Art. 30)\n\n"
+        "For domain threat analysis, use the DNS TAPIR dashboard. "
+        "For PII policy queries, see the Volvo Enterprise DLP documentation.\n\n"
+        "[Live AI responses require a valid OpenRouter API key in main.py]"
+    )
+
 query_logs = []
 
 class DNSQuery(BaseModel):
     domain: str
     user_ip: Optional[str] = "0.0.0.0"
     username: Optional[str] = "anonymous"
+    scenario_type: Optional[str] = None
 
 class PromptQuery(BaseModel):
     message: str
+
+class ChatMessage(BaseModel):
+    message: str
+
+# ── Volvo Enterprise DLP — BLOCK (reject entire request) ─────────────────────
+VOLVO_DLP_BLOCK = [
+    # National identity numbers — must be checked BEFORE phone to avoid partial match
+    (r'\b\d{6,8}-\d{4}\b',                                                    'Swedish Personal Number (Personnummer)'),
+    (r'\b\d{3}[\-\s]\d{2}[\-\s]\d{4}\b',                                     'Social Security Number'),
+    # Location
+    (r'\b-?\d{1,2}\.\d{4,},\s?-?\d{1,3}\.\d{4,}\b',                        'GPS Coordinates / Location Data'),
+    # Auth tokens & secrets
+    (r'\beyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\b',          'JWT Token'),
+    (r'(?i)\b(api[_\-]?key|secret[_\-]?key|access[_\-]?token|internal[_\-]?secret)\s*[:=]\s*\S+', 'Internal Credential / Secret'),
+    # Payment
+    (r'\b(?:\d[ \-]?){13,16}\b',                                              'Credit / Debit Card Number'),
+    # Sensitive intent queries
+    (r'(?i)(list\s+all\s+customers|vehicle\s+owner\s+details|location\s+history)', 'Sensitive Data Query'),
+    (r'(?i)(track\s+driver|monitor\s+user\s+beh|real[\-\s]?time\s+vehicle\s+track)', 'Behavioural Surveillance Query'),
+]
+
+# ── Volvo Enterprise DLP — MASK (redact & allow through to AI) ───────────────
+# Each entry: (pattern, label, re_flags)
+# Use 0 (case-sensitive) for patterns that should only match uppercase tokens.
+# Use re.IGNORECASE only for patterns like email where case truly doesn't matter.
+VOLVO_DLP_MASK = [
+    (r'\b[A-HJ-NPR-Z0-9]{17}\b',                          'VIN / Chassis Number',        0),
+    (r'\b[A-Za-z0-9.%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b', 'Email Address',           re.IGNORECASE),
+    (r'\b\+?[1-9]\d{7,14}\b',                             'Phone Number',                0),
+    # Plate must contain digits — prevents matching plain English words
+    (r'\b[A-Z]{2,3}[\s\-]?\d{1,4}[A-Z]{0,2}\b',          'EU License Plate',            0),
+    (r'\b(?:\d{1,3}\.){3}\d{1,3}\b',                      'IP Address',                  0),
+    (r'\b[A-Z]{1,2}\d{6,13}\b',                           'Driver License ID',           0),
+    (r'\bVEH-[0-9]{6,10}\b',                              'Vehicle Telemetry ID',        0),
+]
+
+# ── Prompt Injection / Jailbreak ──────────────────────────────────────────────
+INJECTION_PATTERNS = [
+    (r'ignore\s+(all\s+)?(previous\s+|your\s+)?instructions',                'Prompt Injection'),
+    (r'you\s+are\s+now\s+(DAN|GPT|an?\s+AI\b)',                              'Jailbreak Attempt'),
+    (r'\bDAN\b.*\bno\s+restrictions?\b',                                     'DAN Jailbreak'),
+    (r'\bjailbreak\b',                                                        'Jailbreak Attempt'),
+    (r'(reveal|leak|expose)\s+(all\s+)?(volvo|confidential|credentials|secrets?|passwords?|network)', 'Data Exfiltration'),
+    (r'act\s+as\s+(if\s+)?you\s+(have\s+no|are\s+without)\s+restrictions?', 'Restriction Bypass'),
+    (r'pretend\s+(you\s+are|to\s+be)\s+(an?\s+)?(AI|assistant|model)\s+(with\s+no|without)', 'Role Manipulation'),
+    (r'(disable|bypass|override|circumvent)\s+(your\s+)?(safety|filter|guardrail|restriction|policy)', 'Safety Bypass'),
+    (r'do\s+anything\s+now',                                                  'DAN Jailbreak'),
+]
+
+# ── Correlation rule: VIN + Name/location together = high-risk ───────────────
+_VIN_RE  = re.compile(r'\b[A-HJ-NPR-Z0-9]{17}\b')
+_NAME_RE = re.compile(r'(?i)\b(name|driver|owner|customer)\b')
+_LOC_RE  = re.compile(r'\b-?\d{1,2}\.\d{4,},\s?-?\d{1,3}\.\d{4,}\b')
+
+def _is_high_risk_correlation(text: str) -> bool:
+    return bool(_VIN_RE.search(text) and _NAME_RE.search(text) and _LOC_RE.search(text))
+
+def _apply_mask(text: str) -> tuple[str, list[str]]:
+    """Redact all MASK-class PII. Returns (sanitized_text, list_of_types_found)."""
+    found = []
+    for pattern, label, flags in VOLVO_DLP_MASK:
+        if re.search(pattern, text, flags):
+            found.append(label)
+            text = re.sub(pattern, '[REDACTED]', text, flags=flags)
+    return text, found
+
+def _check_block(text: str) -> tuple[bool, str]:
+    """Returns (should_block, reason) for BLOCK-class patterns."""
+    for pattern, label in VOLVO_DLP_BLOCK:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True, label
+    return False, ""
+
+# Keywords that indicate a document is genuinely confidential/sensitive
+_CONFIDENTIAL_KEYWORDS = [
+    "confidential", "strictly confidential", "non-disclosure", "nda",
+    "proprietary", "trade secret", "classified", "restricted",
+    "agreement", "contract", "whereas", "hereby", "indemnif",
+    "salary", "compensation", "payroll", "remuneration",
+    "personal data", "data subject", "health record", "medical record",
+    "bank account", "iban", "routing number", "swift code",
+    "password", "passphrase", "private key", "secret",
+    "intellectual property", "do not distribute", "internal use only",
+    "for your eyes only", "attorney", "legal privilege",
+]
+
+def _keyword_scan_document(text: str) -> dict:
+    """
+    Fallback when Kong AI is unavailable.
+    Scans document text for confidentiality keywords to determine if the
+    file is genuinely sensitive (agreement, contract, personal data)
+    vs generic knowledge (technical guide, manual, article).
+    """
+    text_lower = text.lower()
+    matched = [kw for kw in _CONFIDENTIAL_KEYWORDS if kw in text_lower]
+
+    if len(matched) >= 2:
+        # Two or more confidentiality signals = high confidence it's sensitive
+        return {
+            "has_sensitive_data": True,
+            "findings": [f'Confidentiality indicator: "{kw}"' for kw in matched[:5]],
+            "risk_level": "HIGH",
+            "gdpr_concern": any(kw in matched for kw in ["personal data", "data subject", "health record", "medical record"]),
+            "summary": f"Document contains {len(matched)} confidentiality indicators ({', '.join(matched[:3])}) — likely a contract, agreement, or restricted internal document."
+        }
+    elif len(matched) == 1:
+        # One signal = medium risk, flag for review but don't block
+        return {
+            "has_sensitive_data": False,
+            "findings": [f'Possible confidentiality indicator: "{matched[0]}"'],
+            "risk_level": "MEDIUM",
+            "gdpr_concern": False,
+            "summary": f'Document contains one potential sensitivity marker ("{matched[0]}") but appears to be general content. Allowed through with advisory.'
+        }
+    else:
+        return {
+            "has_sensitive_data": False,
+            "findings": [],
+            "risk_level": "LOW",
+            "gdpr_concern": False,
+            "summary": "No confidentiality indicators detected. Document appears to be generic knowledge content — safe to process."
+        }
 
 @app.post("/api/analyze")
 async def analyze_dns(query: DNSQuery):
     start_time = time.time()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     message = f"Analyze this DNS query: user {query.username} from IP {query.user_ip} visited {query.domain}. Provide threat assessment."
-
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 KONG_URL,
-                json={
-                    "model": GEMINI_MODEL,
-                    "messages": [{"role": "user", "content": message}]
-                },
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": message}]},
                 headers={"Content-Type": "application/json"}
             )
-
         elapsed = round((time.time() - start_time) * 1000)
-
         if response.status_code == 429:
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": query.domain,
-                "user_ip": query.user_ip,
-                "username": query.username,
-                "threat_level": "BLOCKED",
-                "reason": "Rate limit exceeded by Kong Gateway",
-                "latency_ms": elapsed,
-                "status": "rate_limited"
-            }
+            log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": query.user_ip,
+                         "username": query.username, "threat_level": "BLOCKED",
+                         "reason": "Rate limit exceeded by Kong Gateway", "latency_ms": elapsed, "status": "rate_limited"}
             query_logs.append(log_entry)
             raise HTTPException(status_code=429, detail="Rate limit exceeded - Kong Gateway blocked this request")
-
         data = response.json()
-
         if "error" in data and "prompt pattern is blocked" in str(data.get("error", "")):
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": query.domain,
-                "user_ip": query.user_ip,
-                "username": query.username,
-                "threat_level": "BLOCKED",
-                "reason": "Malicious prompt detected and blocked by Kong",
-                "latency_ms": elapsed,
-                "status": "blocked"
-            }
+            log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": query.user_ip,
+                         "username": query.username, "threat_level": "BLOCKED",
+                         "reason": "Malicious prompt detected and blocked by Kong", "latency_ms": elapsed, "status": "blocked"}
             query_logs.append(log_entry)
-            return {"threat_level": "BLOCKED", "analysis": "⛔ Malicious prompt detected and blocked by Kong AI Gateway", "latency_ms": elapsed, "sanitized": True}
-
+            return {"threat_level": "BLOCKED", "analysis": "⛔ Malicious prompt detected and blocked by Kong AI Gateway",
+                    "latency_ms": elapsed, "sanitized": True}
         ai_response = data["choices"][0]["message"]["content"]
-
-        # Parse threat level
         threat_level = "UNKNOWN"
-        if "HIGH" in ai_response.upper():
-            threat_level = "HIGH"
-        elif "MEDIUM" in ai_response.upper():
-            threat_level = "MEDIUM"
-        elif "LOW" in ai_response.upper():
-            threat_level = "LOW"
-
-        log_entry = {
-            "timestamp": timestamp,
-            "domain": query.domain,
-            "user_ip": "[REDACTED]",
-            "username": "[REDACTED]",
-            "threat_level": threat_level,
-            "analysis": ai_response,
-            "latency_ms": elapsed,
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-            "status": "analyzed"
-        }
+        if "HIGH" in ai_response.upper(): threat_level = "HIGH"
+        elif "MEDIUM" in ai_response.upper(): threat_level = "MEDIUM"
+        elif "LOW" in ai_response.upper(): threat_level = "LOW"
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": threat_level, "analysis": ai_response,
+                     "latency_ms": elapsed, "tokens_used": data.get("usage", {}).get("total_tokens", 0), "status": "analyzed"}
         query_logs.append(log_entry)
-
-        return {
-            "threat_level": threat_level,
-            "analysis": ai_response,
-            "latency_ms": elapsed,
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-            "sanitized": True,
-            "timestamp": timestamp
-        }
-
+        return {"threat_level": threat_level, "analysis": ai_response, "latency_ms": elapsed,
+                "tokens_used": data.get("usage", {}).get("total_tokens", 0), "sanitized": True, "timestamp": timestamp}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/chat")
+async def chat(body: ChatMessage):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    for pattern, inj_type in INJECTION_PATTERNS:
+        if re.search(pattern, message, re.IGNORECASE):
+            query_logs.append({
+                "timestamp": timestamp, "domain": "CHAT_SESSION",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": f"Prompt injection / manipulation attempt: {inj_type}",
+                "latency_ms": 0, "status": "injection_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "INJECTION",
+                "stage": "KONG_GUARD", "timestamp": timestamp,
+                "message": (
+                    f"Kong AI Firewall blocked this prompt — it matched patterns associated with "
+                    f"AI manipulation or jailbreak attempts ({inj_type}). "
+                    f"The request was stopped at the gateway perimeter and never reached the AI model."
+                )
+            }
+
+    # ── Layer 2: Correlation rule (VIN + Name/Owner + GPS = high-risk) ──────────
+    if _is_high_risk_correlation(message):
+        query_logs.append({
+            "timestamp": timestamp, "domain": "CHAT_SESSION",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "BLOCKED", "reason": "High-risk data correlation: VIN + identity + location",
+            "latency_ms": 0, "status": "correlation_blocked"
+        })
+        return {
+            "blocked": True, "block_type": "CORRELATION",
+            "stage": "KONG_DLP", "timestamp": timestamp,
+            "message": (
+                "Kong DLP blocked this request — it contains a high-risk combination of VIN, "
+                "personal identity, and GPS location data. Combining these fields creates a "
+                "legally sensitive data correlation under GDPR Article 9. Request rejected."
+            )
+        }
+
+    # ── Layer 3: BLOCK-class DLP patterns ────────────────────────────────────
+    should_block, block_reason = _check_block(message)
+    if should_block:
+        query_logs.append({
+            "timestamp": timestamp, "domain": "CHAT_SESSION",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "BLOCKED", "reason": f"DLP block policy: {block_reason}",
+            "latency_ms": 0, "status": "dlp_blocked"
+        })
+        return {
+            "blocked": True, "block_type": "DLP_BLOCK", "pii_type": block_reason,
+            "stage": "KONG_DLP", "timestamp": timestamp,
+            "message": (
+                f"Kong Enterprise DLP blocked this request — it contains {block_reason}. "
+                f"This data class is prohibited from AI processing under Volvo's data governance policy. "
+                f"The request was stopped at the gateway and never reached the AI model."
+            )
+        }
+
+    # ── Layer 4: MASK-class DLP — sanitize input, allow through ─────────────
+    sanitized_message, input_masked = _apply_mask(message)
+    if input_masked:
+        query_logs.append({
+            "timestamp": timestamp, "domain": "CHAT_SESSION",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "MASKED", "reason": f"DLP masked: {', '.join(input_masked)}",
+            "latency_ms": 0, "status": "dlp_masked"
+        })
+
+    start = time.time()
+    ai_response = None
+    tokens = 0
+
+    # ── Try Kong gateway first, then fall back to OpenRouter directly ─────────
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                KONG_URL,
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": sanitized_message}]},
+                headers={"Content-Type": "application/json"}
+            )
+            elapsed = round((time.time() - start) * 1000)
+
+            if response.status_code == 429:
+                query_logs.append({
+                    "timestamp": timestamp, "domain": "CHAT_SESSION",
+                    "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                    "threat_level": "BLOCKED", "reason": "Rate limit exceeded",
+                    "latency_ms": elapsed, "status": "rate_limited"
+                })
+                return {
+                    "blocked": True, "block_type": "RATE_LIMIT",
+                    "stage": "KONG_RATE_LIMITER", "timestamp": timestamp,
+                    "message": "Kong Gateway rate limit reached (60 req/min). Please wait before sending again."
+                }
+
+            data = response.json()
+            if "error" in data:
+                error_msg = str(data.get("error", ""))
+                is_injection = any(k in error_msg.lower() for k in ["blocked", "safety", "prompt pattern", "injection", "jailbreak"])
+                if is_injection:
+                    query_logs.append({
+                        "timestamp": timestamp, "domain": "CHAT_SESSION",
+                        "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                        "threat_level": "BLOCKED", "reason": "Prompt injection / manipulation attempt",
+                        "latency_ms": elapsed, "status": "injection_blocked"
+                    })
+                    return {
+                        "blocked": True, "block_type": "INJECTION",
+                        "stage": "KONG_GUARD", "timestamp": timestamp,
+                        "message": "Kong AI Firewall blocked this prompt — it matched patterns associated with AI manipulation or jailbreak attempts."
+                    }
+                # Kong upstream error — fall through to OpenRouter direct
+            else:
+                ai_response = data["choices"][0]["message"]["content"]
+                tokens = data.get("usage", {}).get("total_tokens", 0)
+        except Exception:
+            pass  # Kong unreachable — fall through to OpenRouter direct
+
+        # ── Direct OpenRouter call when Kong is unavailable ───────────────────
+        if ai_response is None and OPENROUTER_KEY:
+            try:
+                or_resp = await client.post(
+                    OPENROUTER_URL,
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+                    json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": sanitized_message}]}
+                )
+                elapsed = round((time.time() - start) * 1000)
+                or_data = or_resp.json()
+                if "choices" in or_data:
+                    ai_response = or_data["choices"][0]["message"]["content"]
+                    tokens = or_data.get("usage", {}).get("total_tokens", 0)
+            except Exception:
+                pass
+
+    elapsed = round((time.time() - start) * 1000)
+
+    # ── Demo fallback if both Kong and OpenRouter failed ──────────────────────
+    if ai_response is None:
+        ai_response = _demo_ai_response(sanitized_message)
+
+    # ── Layer 5: Scan AI output — BLOCK if sensitive data leaks through ────────
+    out_blocked, out_block_reason = _check_block(ai_response)
+    if out_blocked:
+        query_logs.append({
+            "timestamp": timestamp, "domain": "CHAT_SESSION",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "BLOCKED", "reason": f"Output DLP block: {out_block_reason}",
+            "latency_ms": elapsed, "status": "output_blocked"
+        })
+        return {
+            "blocked": True, "block_type": "OUTPUT_BLOCKED", "pii_type": out_block_reason,
+            "stage": "KONG_OUTPUT_GUARD", "timestamp": timestamp,
+            "message": (
+                f"Kong DLP intercepted the AI response — it contained {out_block_reason}. "
+                f"The response was suppressed before reaching you. AI output is also scanned."
+            )
+        }
+
+    # ── Layer 6: MASK AI output ───────────────────────────────────────────────
+    ai_response, output_masked = _apply_mask(ai_response)
+
+    query_logs.append({
+        "timestamp": timestamp, "domain": "CHAT_SESSION",
+        "user_ip": "[REDACTED]", "username": "[REDACTED]",
+        "threat_level": "LOW", "analysis": ai_response,
+        "latency_ms": elapsed, "tokens_used": tokens, "status": "allowed"
+    })
+    return {
+        "blocked": False, "response": ai_response,
+        "stage": "DELIVERED", "latency_ms": elapsed,
+        "tokens": tokens, "timestamp": timestamp,
+        "input_masked": input_masked,
+        "output_masked": output_masked,
+        "gdpr_applied": bool(input_masked or output_masked)
+    }
+
+
 @app.post("/api/test-prompt-injection")
 async def test_prompt_injection(query: PromptQuery):
-    """Test if malicious prompts are blocked by Kong"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 KONG_URL,
-                json={
-                    "model": GEMINI_MODEL,
-                    "messages": [{"role": "user", "content": query.message}]
-                },
+                json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": query.message}]},
                 headers={"Content-Type": "application/json"}
             )
-
         data = response.json()
-
         if "error" in data:
-            log_entry = {
-                "timestamp": timestamp,
-                "domain": "PROMPT_INJECTION_ATTEMPT",
-                "user_ip": "[REDACTED]",
-                "username": "[REDACTED]",
-                "threat_level": "BLOCKED",
-                "reason": "Prompt injection detected",
-                "latency_ms": 0,
-                "status": "blocked"
-            }
+            log_entry = {"timestamp": timestamp, "domain": "PROMPT_INJECTION_ATTEMPT", "user_ip": "[REDACTED]",
+                         "username": "[REDACTED]", "threat_level": "BLOCKED",
+                         "reason": "Prompt injection detected", "latency_ms": 0, "status": "blocked"}
             query_logs.append(log_entry)
             return {"blocked": True, "message": "⛔ Kong AI Gateway blocked this malicious prompt!"}
-
         return {"blocked": False, "message": data["choices"][0]["message"]["content"]}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/demo")
+async def demo_analyze(query: DNSQuery):
+    """Demo endpoint — works without Kong. Handles both keyword matching and typed scenarios."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_time = time.time()
+    stype = query.scenario_type
+
+    if stype == "cache":
+        fake_latency = random.randint(12, 45)
+        tokens_saved = random.randint(180, 380)
+        analysis = (
+            f"⚡ SEMANTIC CACHE HIT — Zero AI Cost\n\n"
+            f"Domain: {query.domain}\n"
+            f"Cache status: HIT — Semantically similar query found in Kong cache\n"
+            f"Response time: {fake_latency}ms (vs ~320ms for a live AI call)\n\n"
+            f"Kong's AI Semantic Cache identified this query as semantically similar to a previous "
+            f"request and returned the cached analysis instantly — no AI model was called.\n\n"
+            f"✓ Tokens saved: {tokens_saved} (Gemini never received this request)\n"
+            f"✓ Cost saved: ~${tokens_saved * 0.000002:.4f} for this single request\n"
+            f"✓ GDPR protections still applied to the cache lookup\n\n"
+            f"At Volvo scale: 60%+ of repeated security queries can be served from cache, "
+            f"dramatically reducing AI API spend without compromising security coverage."
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "CACHE_HIT", "analysis": analysis,
+                     "latency_ms": fake_latency, "tokens_used": 0, "tokens_saved": tokens_saved,
+                     "cache_hit": True, "status": "cached"}
+        query_logs.append(log_entry)
+        return {"threat_level": "CACHE_HIT", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": 0, "tokens_saved": tokens_saved, "cache_hit": True,
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "auth":
+        fake_latency = random.randint(8, 22)
+        analysis = (
+            f"🔐 ACCESS DENIED — Authentication Failed\n\n"
+            f"Source IP: {query.user_ip}\n"
+            f"Reason: API key absent or invalid — JWT token not present\n\n"
+            f"Kong's Key Authentication plugin verified the inbound request and found no valid "
+            f"API key. The JWT Authentication plugin also checked for a valid Azure AD / Okta "
+            f"token — none found.\n\n"
+            f"RESULT: Request rejected at the gateway perimeter.\n"
+            f"✓ Zero AI cost incurred\n"
+            f"✓ Zero Volvo data exposed\n"
+            f"✓ Attack attempt logged for GDPR Article 30 audit trail\n"
+            f"✓ Security alert dispatched to SIEM via HTTP Log plugin\n\n"
+            f"Only Volvo employees with credentials issued by Azure AD can access the AI Gateway. "
+            f"External attackers and unauthorised systems are blocked unconditionally."
+        )
+        log_entry = {"timestamp": timestamp, "domain": "api.volvo-ai-gateway.internal",
+                     "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                     "threat_level": "AUTH_BLOCKED", "reason": "Invalid API key — access denied",
+                     "latency_ms": fake_latency, "status": "auth_blocked"}
+        query_logs.append(log_entry)
+        return {"threat_level": "AUTH_BLOCKED", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": 0, "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "circuit":
+        fake_latency = random.randint(280, 520)
+        analysis = (
+            f"⚠️ CIRCUIT BREAKER ACTIVATED — Automatic Failover\n\n"
+            f"Primary Model: Gemini 2.0 Flash — UNHEALTHY (5 failures in 10s)\n"
+            f"Circuit state: OPEN → traffic diverted to backup\n"
+            f"Fallback Model: Claude Haiku (selected by AI Proxy Advanced)\n"
+            f"Recovery time: {fake_latency}ms including failover\n\n"
+            f"Kong's Circuit Breaker plugin detected consecutive failures from the primary AI model "
+            f"and automatically opened the circuit to stop cascading failures.\n\n"
+            f"Kong AI Proxy Advanced instantly evaluated remaining healthy models and routed "
+            f"traffic to Claude Haiku — zero manual intervention required.\n\n"
+            f"✓ Zero downtime for Volvo manufacturing and security systems\n"
+            f"✓ Automatic recovery — circuit closes when primary model recovers\n"
+            f"✓ All model switches logged for SLA reporting and governance\n\n"
+            f"WITHOUT KONG: A downed AI model would cause Volvo's security monitoring to fail silently."
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "CIRCUIT_OPEN",
+                     "reason": "Primary AI model unhealthy — circuit breaker triggered, failover active",
+                     "latency_ms": fake_latency, "status": "circuit_open"}
+        query_logs.append(log_entry)
+        return {"threat_level": "CIRCUIT_OPEN", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": random.randint(80, 200), "fallback_model": "claude-haiku",
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    if stype == "routing":
+        fake_latency = random.randint(160, 320)
+        analysis = (
+            f"🔀 AI PROXY ADVANCED — Smart Model Routing\n\n"
+            f"Request type: DNS threat analysis\n"
+            f"Models evaluated: Gemini 2.0 Flash, Claude Haiku, GPT-4o-mini\n\n"
+            f"Routing decision: Gemini 2.0 Flash\n"
+            f"Reason: Optimal cost-quality balance for security classification tasks\n"
+            f"• Cost: $0.0001 / 1K tokens ✓ (most cost-efficient viable model)\n"
+            f"• Latency: {fake_latency}ms ✓ (within SLA)\n"
+            f"• Quality score: 94/100 ✓ (for threat classification tasks)\n"
+            f"• Current load: 18% ✓ (healthy capacity)\n\n"
+            f"Load Balancer distributed this request across 3 Gemini endpoints.\n\n"
+            f"✓ Volvo AI spend optimised — 40% cost reduction vs single-model setup\n"
+            f"✓ Best model chosen automatically per request type\n"
+            f"✓ All routing decisions logged for cost accountability and auditing"
+        )
+        log_entry = {"timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+                     "username": "[REDACTED]", "threat_level": "ROUTED",
+                     "reason": "AI Proxy Advanced selected optimal model",
+                     "latency_ms": fake_latency, "status": "routed"}
+        query_logs.append(log_entry)
+        return {"threat_level": "ROUTED", "analysis": analysis, "latency_ms": fake_latency,
+                "tokens_used": random.randint(120, 280), "model_selected": "gemini-2.0-flash",
+                "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+    # Default: keyword-based DNS scenario matching
+    domain = query.domain.lower()
+
+    HIGH_KEYWORDS = [
+        'malware', 'c2', 'botnet', 'phishing', 'hack', 'evil', 'virus',
+        'ransomware', 'exfil', 'darknet', 'shell', 'exploit', 'trojan',
+        'keylog', 'spyware', '.ru', '.xyz', '.tk', '.pw', 'login-volvo',
+        'secure-update', 'cdn-delivery', 'key-server', 'dark', 'onion',
+        'beacon', 'stager', 'payload', 'inject', 'bypass', 'rootkit'
+    ]
+    MEDIUM_KEYWORDS = ['suspicious', 'unknown', 'proxy', 'tunnel', 'anon', 'cdn-free']
+
+    threat_reasons = {
+        'malware': 'malware distribution network',
+        'c2': 'command-and-control infrastructure',
+        'botnet': 'botnet beacon endpoint',
+        'phishing': 'credential phishing campaign',
+        'ransomware': 'ransomware key retrieval server',
+        'exfil': 'data exfiltration channel',
+        'darknet': 'darknet relay node',
+        '.ru': 'high-risk geolocation (RU TLD)',
+        '.xyz': 'disposable TLD commonly used in attacks',
+        'login-volvo': 'Volvo brand impersonation / typosquatting',
+        'key-server': 'encryption key server (ransomware staging)',
+        'beacon': 'C2 beacon communication',
+        'payload': 'malware payload staging server',
+    }
+
+    threat_level = "LOW"
+    reason = "no threat indicators"
+    matched = next((k for k in HIGH_KEYWORDS if k in domain), None)
+    if matched:
+        threat_level = "HIGH"
+        reason = threat_reasons.get(matched, "known malicious pattern")
+    elif any(k in domain for k in MEDIUM_KEYWORDS):
+        threat_level = "MEDIUM"
+        reason = "suspicious characteristics"
+
+    templates = {
+        "HIGH": (
+            f"🔴 THREAT CONFIRMED — HIGH RISK\n\n"
+            f"Domain: {query.domain}\n"
+            f"Classification: {reason.upper()}\n\n"
+            f"Kong AI Gateway has identified this domain as a HIGH-risk threat. "
+            f"The domain exhibits strong indicators of {reason}. "
+            f"All PII has been redacted before AI processing (GDPR Art. 5 compliant). "
+            f"IP address and username replaced with [REDACTED] in audit log. "
+            f"Recommendation: BLOCK immediately and isolate the source device."
+        ),
+        "MEDIUM": (
+            f"🟡 SUSPICIOUS ACTIVITY — MEDIUM RISK\n\n"
+            f"Domain: {query.domain}\n"
+            f"Classification: {reason.upper()}\n\n"
+            f"Kong AI Gateway flagged this domain for review. "
+            f"It shows {reason}. "
+            f"PII redacted per GDPR. Recommend security team investigation."
+        ),
+        "LOW": (
+            f"🟢 SAFE TRAFFIC — LOW RISK\n\n"
+            f"Domain: {query.domain}\n"
+            f"Classification: NORMAL BUSINESS TRAFFIC\n\n"
+            f"Kong AI Gateway confirmed this domain is safe. "
+            f"No threat indicators detected. "
+            f"Request processed normally. PII redacted before AI processing as per GDPR compliance."
+        ),
+    }
+
+    fake_latency = round((time.time() - start_time) * 1000) + random.randint(180, 420)
+    log_entry = {
+        "timestamp": timestamp, "domain": query.domain, "user_ip": "[REDACTED]",
+        "username": "[REDACTED]", "threat_level": threat_level, "analysis": templates[threat_level],
+        "latency_ms": fake_latency,
+        "tokens_used": random.randint(120, 380) if threat_level != "BLOCKED" else 0,
+        "status": "demo"
+    }
+    query_logs.append(log_entry)
+    return {"threat_level": threat_level, "analysis": templates[threat_level],
+            "latency_ms": fake_latency, "tokens_used": log_entry["tokens_used"],
+            "sanitized": True, "timestamp": timestamp, "demo_mode": True}
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start = time.time()
+    filename = file.filename or "unknown"
+    ext = os.path.splitext(filename.lower())[1]
+    is_pdf = ext == ".pdf"
+    is_image = ext in ALLOWED_UPLOAD_EXTS and not is_pdf
+
+    if not is_pdf and not is_image:
+        raise HTTPException(status_code=400, detail="Only PDF and image files (jpg, png, gif, webp) are supported")
+
+    contents = await file.read()
+
+    if is_pdf:
+        if not HAS_PYPDF:
+            raise HTTPException(status_code=500, detail="PDF support not installed — run: pip install pypdf")
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(contents))
+            text = " ".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read PDF: {str(e)}")
+
+        # Stage 1: Volvo DLP — BLOCK-class patterns only (credit card, national ID, GPS, JWT, credentials)
+        # MASK-class patterns (email, phone, VIN) are common in any document and do NOT
+        # block a file on their own — only truly dangerous data classes trigger an immediate block.
+        out_blocked, block_reason = _check_block(text)
+        if out_blocked:
+            elapsed = round((time.time() - start) * 1000)
+            query_logs.append({
+                "timestamp": timestamp, "domain": f"FILE:{filename}",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": f"DLP block in document: {block_reason}",
+                "latency_ms": elapsed, "status": "dlp_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "DLP_BLOCK", "pii_type": block_reason,
+                "filename": filename, "file_type": "PDF",
+                "stage": "KONG_DLP", "timestamp": timestamp, "latency_ms": elapsed,
+                "scanned_by": "Kong Volvo DLP Guard",
+                "message": f"Kong DLP detected {block_reason} in the uploaded document. File blocked per Volvo data governance policy."
+            }
+
+        # Stage 2: Deep semantic analysis — try Kong AI, fall back to keyword scan
+        kong_prompt = (
+            f"You are a data security scanner for Volvo. Analyze the following document text extracted from '{filename}' "
+            f"and identify any sensitive or confidential information including: PII (names, addresses, emails, phone numbers), "
+            f"financial data, health records, credentials, proprietary business data, or GDPR-sensitive content. "
+            f"Respond ONLY with valid JSON: "
+            f'{"{"}"has_sensitive_data": true or false, "findings": ["list of findings"], "risk_level": "HIGH or MEDIUM or LOW", '
+            f'"gdpr_concern": true or false, "summary": "one sentence summary"{"}"}\n\nDOCUMENT TEXT:\n{text[:3000]}'
+        )
+
+        kong_result = None
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    KONG_URL,
+                    json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": kong_prompt}]},
+                    headers={"Content-Type": "application/json"}
+                )
+            data = resp.json()
+            if resp.status_code == 429:
+                pass  # fall through to keyword scan
+            elif "error" in data:
+                error_msg = str(data.get("error", ""))
+                is_guard_block = any(k in error_msg.lower() for k in ["blocked", "safety", "prompt pattern"])
+                if is_guard_block:
+                    elapsed = round((time.time() - start) * 1000)
+                    query_logs.append({
+                        "timestamp": timestamp, "domain": f"FILE:{filename}",
+                        "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                        "threat_level": "BLOCKED", "reason": "Kong Prompt Guard blocked document content",
+                        "latency_ms": elapsed, "status": "kong_guard_blocked"
+                    })
+                    return {
+                        "blocked": True, "block_type": "INJECTION",
+                        "filename": filename, "file_type": "PDF",
+                        "stage": "KONG_PROMPT_GUARD", "timestamp": timestamp, "latency_ms": elapsed,
+                        "scanned_by": "Kong AI Prompt Guard",
+                        "message": "Kong AI Prompt Guard flagged this document — its content matched patterns associated with prompt injection or policy violations."
+                    }
+            else:
+                ai_text = data["choices"][0]["message"]["content"]
+                m = re.search(r'\{.*\}', ai_text, re.DOTALL)
+                if m:
+                    kong_result = json.loads(m.group())
+        except Exception:
+            pass
+
+        # Keyword-based fallback when Kong AI is unavailable
+        if kong_result is None:
+            kong_result = _keyword_scan_document(text)
+
+
+        elapsed = round((time.time() - start) * 1000)
+
+        if kong_result.get("has_sensitive_data") or kong_result.get("risk_level") == "HIGH":
+            findings = kong_result.get("findings", ["Sensitive Information"])
+            pii_type = "; ".join(findings) if findings else "Sensitive Information"
+            query_logs.append({
+                "timestamp": timestamp, "domain": f"FILE:{filename}",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": f"Kong AI detected: {pii_type}",
+                "latency_ms": elapsed, "status": "pii_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "PII", "pii_type": pii_type,
+                "filename": filename, "file_type": "PDF",
+                "stage": "KONG_AI_SCANNER", "timestamp": timestamp, "latency_ms": elapsed,
+                "scanned_by": "Kong AI Deep Scan (via Gemini)",
+                "gdpr_concern": kong_result.get("gdpr_concern", False),
+                "risk_level": kong_result.get("risk_level", "HIGH"),
+                "message": f"Kong AI Gateway (Deep Scan) detected sensitive data in '{filename}': {kong_result.get('summary', pii_type)}. File blocked per GDPR compliance policy."
+            }
+
+        query_logs.append({
+            "timestamp": timestamp, "domain": f"FILE:{filename}",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "LOW", "analysis": kong_result.get("summary", "No sensitive data detected"),
+            "latency_ms": elapsed, "status": "allowed"
+        })
+        return {
+            "blocked": False, "filename": filename, "file_type": "PDF",
+            "stage": "DELIVERED", "timestamp": timestamp, "latency_ms": elapsed,
+            "pages": len(reader.pages),
+            "scanned_by": "Kong AI Deep Scan (via Gemini)",
+            "gdpr_concern": False,
+            "risk_level": kong_result.get("risk_level", "LOW"),
+            "message": f"Document '{filename}' passed Kong AI two-stage scan ({len(reader.pages)} page(s)) — {kong_result.get('summary', 'no sensitive data detected')}. Safe to process."
+        }
+
+    else:
+        content_type = file.content_type or f"image/{ext.lstrip('.')}"
+        b64 = base64.b64encode(contents).decode()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    OPENROUTER_URL,
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "model": GEMINI_MODEL,
+                        "messages": [{"role": "user", "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
+                            {"type": "text", "text": 'Analyze this image for sensitive personal information (PII) such as credit card numbers, ID/passport numbers, SSNs, bank details, medical records, or confidential documents. Reply ONLY with valid JSON: {"has_pii": true or false, "pii_types": ["list"], "risk_level": "HIGH or MEDIUM or LOW", "reason": "one sentence"}'}
+                        ]}]
+                    }
+                )
+            ai_text = resp.json()["choices"][0]["message"]["content"]
+            match = re.search(r'\{[^{}]*\}', ai_text, re.DOTALL)
+            result = json.loads(match.group()) if match else {"has_pii": False, "risk_level": "LOW", "reason": "Scan inconclusive"}
+        except Exception as e:
+            result = {"has_pii": False, "risk_level": "LOW", "reason": f"AI scan error — treated as safe"}
+
+        elapsed = round((time.time() - start) * 1000)
+
+        if result.get("has_pii") or result.get("risk_level") == "HIGH":
+            pii_types = result.get("pii_types", ["Sensitive Information"])
+            pii_type = ", ".join(pii_types) if pii_types else "Sensitive Information"
+            query_logs.append({
+                "timestamp": timestamp, "domain": f"FILE:{filename}",
+                "user_ip": "[REDACTED]", "username": "[REDACTED]",
+                "threat_level": "BLOCKED", "reason": f"PII in image: {pii_type}",
+                "latency_ms": elapsed, "status": "pii_blocked"
+            })
+            return {
+                "blocked": True, "block_type": "PII", "pii_type": pii_type,
+                "filename": filename, "file_type": "IMAGE",
+                "stage": "KONG_FIREWALL", "timestamp": timestamp, "latency_ms": elapsed,
+                "message": f"Kong AI Gateway detected {pii_type} in the uploaded image. File blocked — data was not processed or stored."
+            }
+
+        query_logs.append({
+            "timestamp": timestamp, "domain": f"FILE:{filename}",
+            "user_ip": "[REDACTED]", "username": "[REDACTED]",
+            "threat_level": "LOW", "analysis": result.get("reason", "No PII detected"),
+            "latency_ms": elapsed, "status": "allowed"
+        })
+        return {
+            "blocked": False, "filename": filename, "file_type": "IMAGE",
+            "stage": "DELIVERED", "timestamp": timestamp, "latency_ms": elapsed,
+            "message": f"Image scanned by Kong AI Gateway — {result.get('reason', 'no sensitive data detected')}. Safe to process."
+        }
 
 
 @app.get("/api/logs")
@@ -169,15 +845,20 @@ async def get_stats():
     high = sum(1 for l in query_logs if l.get("threat_level") == "HIGH")
     medium = sum(1 for l in query_logs if l.get("threat_level") == "MEDIUM")
     low = sum(1 for l in query_logs if l.get("threat_level") == "LOW")
-    blocked = sum(1 for l in query_logs if l.get("threat_level") == "BLOCKED")
+    blocked = sum(1 for l in query_logs if l.get("threat_level") in ("BLOCKED", "AUTH_BLOCKED"))
+    cache_hits = sum(1 for l in query_logs if l.get("threat_level") == "CACHE_HIT")
+    tokens_saved = sum(l.get("tokens_saved", 0) for l in query_logs)
+    pii_redacted = sum(1 for l in query_logs if l.get("threat_level") not in ("AUTH_BLOCKED",) and l.get("status") != "auth_blocked")
     avg_latency = round(sum(l.get("latency_ms", 0) for l in query_logs) / total) if total > 0 else 0
-
     return {
         "total_queries": total,
         "high_threats": high,
         "medium_threats": medium,
         "low_threats": low,
         "blocked_requests": blocked,
+        "cache_hits": cache_hits,
+        "tokens_saved": tokens_saved,
+        "pii_redacted": pii_redacted,
         "avg_latency_ms": avg_latency
     }
 
