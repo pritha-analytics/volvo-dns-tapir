@@ -5,7 +5,7 @@ from mcp.client.sse import sse_client
 from mcp.client.session import ClientSession
 
 KONG_AI_URL = "http://localhost:8000/ai"
-KONG_MCP_URL = "http://localhost:5000/sse"
+KONG_MCP_URL = "http://localhost:8000/mcp/sse"
 MODEL = "google/gemini-2.0-flash-001"
 MAX_TOOL_LOOPS = 5  # Prevent infinite loops
 

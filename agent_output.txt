@@ -1,0 +1,21 @@
+=======================================
+Volvo DNS TAPIR - Secure MCP Agent Demo
+=======================================
+Type 'quit' or 'exit' to stop.
+
+You: 
+[Agent] Connecting to MCP Server via Kong at http://localhost:8000/mcp/sse...
+[Agent] Discovering tools...
+[Agent] Found tools: ['fetch_documents']
+[Agent] Sending prompt and tools to LLM via Kong AI Proxy...
+
+[Agent] 🛠️ LLM requested tool: fetch_documents with arguments: {'query': 'XC90 specs'}
+[Agent] Executing tool via Kong MCP route...
+[Agent] Tool returned 17 characters of data.
+[Agent] Sending tool result back to LLM for final answer...
+
+[LLM Final Answer]:
+I am sorry, I do not have access to the specs for the XC90. I can help you with other requests.
+
+
+You: 

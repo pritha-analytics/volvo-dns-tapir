@@ -1,39 +1,55 @@
-version: "3.9"
+x-kong-env: &kong-env
+  KONG_DATABASE: postgres
+  KONG_PG_HOST: kong-database
+  KONG_PG_USER: kong
+  KONG_PG_PASSWORD: kongpass
 
-# One-time setup (already done):
-#   docker login docker.cloudsmith.io --username "kong/ai-pii" --password 7B4xGm6YONpejnhA
-#   docker pull docker.cloudsmith.io/kong/ai-pii/service:v0.1.4-en
-#
-# Start the stack:
-#   docker compose up -d
+networks:
+  kong-net:
+    driver: bridge
 
 services:
-  # ── AI PII Anonymizer sidecar ─────────────────────────────────────────────
-  # Runs the NLP entity-detection model on port 8080.
-  # Kong's ai-sanitizer plugin forwards request bodies here before sending to Gemini.
-  ai-pii:
-    image: docker.cloudsmith.io/kong/ai-pii/service:v0.1.4-en
-    ports:
-      - "8080:8080"
-    restart: unless-stopped
-
-  # ── Kong DB-less gateway ──────────────────────────────────────────────────
-  kong:
-    image: kong/kong-gateway:3.9
+  kong-database:
+    image: postgres:13
+    container_name: kong-database
     environment:
-      KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yaml
-      KONG_PROXY_LISTEN: "0.0.0.0:8000"
-      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      POSTGRES_USER: kong
+      POSTGRES_DB: kong
+      POSTGRES_PASSWORD: kongpass
+    networks:
+      - kong-net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kong-migrations:
+    image: kong/kong-gateway:latest
+    container_name: kong-migrations
+    environment:
+      <<: *kong-env
+    command: kong migrations bootstrap
+    networks:
+      - kong-net
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    restart: "no"
+
+  kong-quickstart:
+    image: kong/kong-gateway:latest
+    container_name: kong-quickstart
+    environment:
+      <<: *kong-env
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
     ports:
       - "8000:8000"
       - "8001:8001"
-    volumes:
-      - ./kong.yaml:/etc/kong/kong.yaml:ro
+      - "8002:8002"
+    networks:
+      - kong-net
     depends_on:
-      - ai-pii
-    healthcheck:
-      test: ["CMD", "kong", "health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      kong-migrations:
+        condition: service_completed_successfully
