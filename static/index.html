@@ -377,6 +377,11 @@ html.light .ldot{box-shadow:0 0 5px var(--green);}
       transition:all .2s;" onmouseover="this.style.background='rgba(0,150,220,.12)'" onmouseout="this.style.background='transparent'">
       💬 LIVE CHAT DEMO
     </a>
+    <div style="display:flex;gap:6px;align-items:center;border-left:1px solid var(--border2);padding-left:14px;">
+      <span style="font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:2px;">ROLE</span>
+      <button id="devRoleBtn" onclick="setRole('developer')" style="font-family:var(--mono);font-size:9px;padding:6px 13px;border-radius:999px;cursor:pointer;transition:all .2s;border:1px solid rgba(0,230,118,.5);color:#00e676;background:rgba(0,230,118,.12);letter-spacing:.5px;">👨‍💻 DEVELOPER</button>
+      <button id="adminRoleBtn" onclick="setRole('admin')" style="font-family:var(--mono);font-size:9px;padding:6px 13px;border-radius:999px;cursor:pointer;transition:all .2s;border:1px solid var(--border);color:var(--muted);background:rgba(255,255,255,.04);letter-spacing:.5px;">🔐 ADMIN</button>
+    </div>
     <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">
       <span id="theme-icon">☀️</span><span id="theme-lbl">LIGHT</span>
     </button>
@@ -757,6 +762,21 @@ html.light .ldot{box-shadow:0 0 5px var(--green);}
 </div><!-- /wrap -->
 
 <script>
+// ── Role management ────────────────────────────────────────────────────────
+let currentRole = 'developer';
+function setRole(role) {
+  currentRole = role;
+  const devBtn   = document.getElementById('devRoleBtn');
+  const adminBtn = document.getElementById('adminRoleBtn');
+  if (role === 'developer') {
+    devBtn.style.cssText   += ';border-color:rgba(0,230,118,.5);color:#00e676;background:rgba(0,230,118,.12);';
+    adminBtn.style.cssText += ';border-color:var(--border);color:var(--muted);background:rgba(255,255,255,.04);';
+  } else {
+    adminBtn.style.cssText += ';border-color:rgba(255,136,0,.5);color:#ff8800;background:rgba(255,136,0,.12);';
+    devBtn.style.cssText   += ';border-color:var(--border);color:var(--muted);background:rgba(255,255,255,.04);';
+  }
+}
+
 // ── Scenario data (10 scenarios) ───────────────────────────────────────────
 const SCENARIOS = [
   {id:'phishing',icon:'🎣',title:'Finance Phishing',short:'Fake Volvo login page targeting Finance',badge:'HIGH RISK',bc:'avH',color:'var(--red)',type:'dns',btnClass:'threat',btnText:'🚨 INVOKE THREAT',biz:'€850K credential theft risk',
@@ -1064,7 +1084,7 @@ async function invoke() {
     if (['cache','auth','circuit','routing'].includes(current.type)) {
       const r = await fetch('/api/demo', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({domain: current.domain, user_ip: current.ip, username: current.user, scenario_type: current.type})
+        body: JSON.stringify({domain: current.domain, user_ip: current.ip, username: current.user, scenario_type: current.type, user_role: currentRole})
       });
       result = await r.json();
       stopped = result.threat_level === 'AUTH_BLOCKED';
@@ -1079,7 +1099,7 @@ async function invoke() {
     } else {
       const r = await fetch('/api/analyze', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({domain: current.domain, user_ip: current.ip, username: current.user})
+        body: JSON.stringify({domain: current.domain, user_ip: current.ip, username: current.user, user_role: currentRole})
       });
       if (r.status === 429) {
         result = {threat_level:'BLOCKED', analysis:'Rate limit exceeded — Kong blocked this request to protect AI costs.', latency_ms:0, sanitized:true};
@@ -1254,7 +1274,7 @@ async function lbTest() {
   try {
     const r = await fetch('/api/demo', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({domain, user_ip:'10.0.0.1', username:'demo-user'})
+      body: JSON.stringify({domain, user_ip:'10.0.0.1', username:'demo-user', user_role: currentRole})
     });
     const result = await r.json();
     const stopped = result.threat_level === 'BLOCKED';
@@ -1340,7 +1360,7 @@ async function invokeForAutoDemo(s) {
   try {
     if (['cache','auth','circuit','routing'].includes(s.type)) {
       const r = await fetch('/api/demo', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({domain: s.domain, user_ip: s.ip, username: s.user, scenario_type: s.type}) });
+        body: JSON.stringify({domain: s.domain, user_ip: s.ip, username: s.user, scenario_type: s.type, user_role: currentRole}) });
       result = await r.json();
       stopped = result.threat_level === 'AUTH_BLOCKED';
     } else if (s.type === 'injection') {
@@ -1351,7 +1371,7 @@ async function invokeForAutoDemo(s) {
       result = {threat_level: d.blocked ? 'BLOCKED' : 'UNKNOWN', analysis: d.message, latency_ms: 0, sanitized: true};
     } else {
       const r = await fetch('/api/analyze', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({domain: s.domain, user_ip: s.ip, username: s.user}) });
+        body: JSON.stringify({domain: s.domain, user_ip: s.ip, username: s.user, user_role: currentRole}) });
       if (r.status === 429) {
         result = {threat_level:'BLOCKED', analysis:'Rate limit exceeded.', latency_ms:0, sanitized:true};
         stopped = true;
