@@ -930,6 +930,14 @@ async def agent_chat_stream(message: str):
 
                 yield _sse_event("step", {"stage": "mcp_discover", "msg": f"MCP tools discovered: {', '.join(tool_names)}"})
 
+                if any(phrase in message.lower() for phrase in ("available files", "list files", "show files", "all files")):
+                    yield _sse_event("step", {"stage": "mcp_call", "msg": "Calling tool list_available_files..."})
+                    tool_result = await mcp.call_tool("list_available_files", arguments={})
+                    result_text = "\n".join(c.text for c in tool_result.content if c.type == "text")
+                    yield _sse_event("step", {"stage": "mcp_result", "msg": f"Tool list_available_files returned {len(result_text)} chars"})
+                    yield _sse_event("answer", {"msg": result_text})
+                    return
+
                 system_prompt = (
                     "You are a helpful Volvo data assistant. You have access to local dataset files via MCP tools.\n"
                     "Before answering data questions, ALWAYS call list_available_files first, then fetch_documents. "
