@@ -36,11 +36,16 @@ body::before{content:'';position:fixed;inset:0;
   border:1px solid rgba(0,230,118,.3);padding:5px 12px;}
 .gdot{width:7px;height:7px;border-radius:50%;background:var(--green);
   box-shadow:0 0 8px var(--green);animation:pulse 1.5s infinite;}
+.mode-toggle{display:flex;gap:8px;align-items:center;}
+.mode-button{font-family:var(--mono);font-size:9px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;color:var(--muted);background:rgba(255,255,255,.04);cursor:pointer;transition:all .2s;letter-spacing:.5px;}
+.mode-button.active{color:var(--text);background:rgba(0,150,220,.15);border-color:var(--kong);}
+.mode-button:hover{background:rgba(0,150,220,.1);}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.8);}}
-.back-link{font-family:var(--mono);font-size:9px;color:var(--muted);
-  text-decoration:none;letter-spacing:1px;border:1px solid var(--border);
-  padding:5px 10px;transition:all .2s;}
-.back-link:hover{color:var(--kong);border-color:var(--kong);}
+
+.plugin-bar{display:flex;flex-wrap:wrap;gap:10px;padding:10px 24px;background:rgba(3,6,9,.88);border-bottom:1px solid var(--border);}
+.plugin-badge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:9px;color:var(--muted);padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(255,255,255,.03);}
+.plugin-badge.active{color:var(--green);border-color:rgba(0,230,118,.35);}
+.plugin-badge.kong{color:var(--kong);border-color:rgba(0,150,220,.35);}
 
 /* ── MAIN LAYOUT ── */
 .main{display:flex;flex:1;overflow:hidden;position:relative;z-index:1;}
@@ -277,9 +282,19 @@ body.flash-red{animation:redFlash .8s ease-out;}
   </div>
   <div class="h-right">
     <div class="guard-badge"><span class="gdot"></span>KONG PROMPT GUARD ENFORCED</div>
-    <a class="back-link" href="/">← DASHBOARD</a>
+    <div class="mode-toggle" id="modeToggle">
+      <button class="mode-button active" id="chatModeBtn" onclick="setAgentMode(false)" title="Quick Chat: Direct AI responses with security checks">QUICK CHAT</button>
+      <button class="mode-button" id="agentModeBtn" onclick="setAgentMode(true)" title="Smart Assistant: AI searches local data and uses tools for detailed answers">SMART ASSISTANT</button>
+    </div>
   </div>
 </header>
+<div class="plugin-bar">
+  <div class="plugin-badge active">🛡️ Kong Prompt Guard</div>
+  <div class="plugin-badge active">🔍 Kong DLP</div>
+  <div class="plugin-badge active">⏱ Kong Rate Limiter</div>
+  <div class="plugin-badge active kong">🔀 Kong AI Proxy</div>
+  <div class="plugin-badge active">⚡ Semantic Cache</div>
+</div>
 
 <!-- MAIN -->
 <div class="main">
@@ -406,6 +421,20 @@ const DEMOS = {
 
 let auditCount = 0;
 let busy = false;
+let agentMode = false;
+
+function setAgentMode(enabled) {
+  agentMode = enabled;
+  document.getElementById('chatModeBtn').classList.toggle('active', !enabled);
+  document.getElementById('agentModeBtn').classList.toggle('active', enabled);
+  const input = document.getElementById('msgInput');
+  input.placeholder = enabled
+    ? 'Smart Assistant mode: Ask questions that need data search or detailed analysis.'
+    : 'Quick Chat: Ask general questions about security, DNS, or Volvo policies.';
+  setStatus('idle', enabled
+    ? 'Smart Assistant mode selected. AI will search local data for better answers.'
+    : 'Ready — type a message below to begin');
+}
 
 function tryDemo(key) {
   const input = document.getElementById('msgInput');
@@ -509,6 +538,125 @@ function addUserMsg(text) {
   msgs.appendChild(wrap);
   msgs.scrollTop = msgs.scrollHeight;
   return wrap;
+}
+
+function addSystemMsg(text) {
+  const msgs = document.getElementById('chatMessages');
+  const el = document.createElement('div');
+  el.className = 'msg-system';
+  el.textContent = text;
+  msgs.appendChild(el);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function handleAgentEvent(event, payload) {
+  if (event === 'step') {
+    setStatus('processing', payload.msg || 'Smart Assistant is working...');
+    addSystemMsg(payload.msg || 'Assistant step');
+  } else if (event === 'answer') {
+    setStatus('success', 'Smart Assistant response delivered.');
+    addAiMsg(payload.msg || '(empty answer)', payload.latency_ms || 0, payload.tokens || 0, payload.input_masked || [], payload.output_masked || []);
+    addAuditEntry({blocked: false, input_masked: payload.input_masked || [], output_masked: payload.output_masked || [], latency_ms: payload.latency_ms || 0, tokens: payload.tokens || 0, timestamp: now()}, 'Smart Assistant response');
+  } else if (event === 'blocked') {
+    document.getElementById('ps-kong').classList.remove('active');
+    document.getElementById('ps-kong').classList.add('blocked');
+    document.getElementById('ps-ai').classList.add('dim');
+    document.getElementById('ps-resp').classList.add('dim');
+    document.getElementById('pc-2').classList.add('blocked-line');
+    document.getElementById('pc-3').classList.add('blocked-line');
+    setStatus('blocked', payload.msg || 'Smart Assistant request blocked');
+    addSystemMsg(payload.msg || 'Assistant blocked');
+  } else if (event === 'error') {
+    setStatus('blocked', 'Smart Assistant error — see console');
+    addSystemMsg('Error: ' + (payload.msg || 'Unknown error'));
+    console.error('Smart Assistant error:', payload.msg);
+  }
+}
+
+async function sendAgentMessage(text) {
+  const input = document.getElementById('msgInput');
+  const sendBtn = document.getElementById('sendBtn');
+  busy = true;
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
+
+  pipeReset();
+  addUserMsg(text);
+  document.getElementById('ps-you').classList.add('active');
+  setStatus('processing', 'Sending request to Smart Assistant...');
+  await travelPacket('pkt-1', 'pc-1', 'blue', 600);
+  fillLine('pc-1', 'blue', 0);
+  document.getElementById('ps-kong').classList.add('active');
+
+  try {
+    const res = await fetch('/api/agent-chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: text})
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      setStatus('blocked', 'Agent request failed');
+      addSystemMsg('Agent request failed: ' + err);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const {value, done} = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, {stream: true});
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed) continue;
+          const lines = trimmed.split('\n');
+          let event = 'message';
+          let data = '';
+          for (const line of lines) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            if (line.startsWith('data:')) data += line.slice(5);
+          }
+          if (!data) continue;
+          let payload = {};
+          try { payload = JSON.parse(data); } catch (e) { console.warn('Failed to parse SSE payload', data, e); }
+          handleAgentEvent(event, payload);
+        }
+      }
+      if (done) break;
+    }
+
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      const lines = trimmed.split('\n');
+      let event = 'message';
+      let data = '';
+      for (const line of lines) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        if (line.startsWith('data:')) data += line.slice(5);
+      }
+      if (data) {
+        let payload = {};
+        try { payload = JSON.parse(data); } catch (e) { console.warn('Failed to parse SSE payload', data, e); }
+        handleAgentEvent(event, payload);
+      }
+    }
+  } catch (err) {
+    setStatus('blocked', 'Smart Assistant error — please try again');
+    addSystemMsg('Smart Assistant error: ' + err.message);
+    console.error('sendAgentMessage error:', err);
+  } finally {
+    busy = false;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
 }
 
 function addThinkingMsg() {
@@ -651,6 +799,11 @@ async function sendMessage() {
   const text    = input.value.trim();
   if (!text) return;
 
+  if (agentMode) {
+    await sendAgentMessage(text);
+    return;
+  }
+
   busy = true;
   input.value = '';
   input.disabled = true;
@@ -758,7 +911,7 @@ async function sendMessage() {
 
       setStatus('success', `✓ Response delivered — ${data.latency_ms}ms · ${data.tokens} tokens · PII redacted by Kong`);
 
-      addAiMsg(data.response || '(no response)', data.latency_ms || 0, data.tokens || 0, data.input_masked, data.output_masked);
+      addAiMsg(data.response || data.message || data.analysis || '(no response)', data.latency_ms || 0, data.tokens || 0, data.input_masked, data.output_masked);
       addAuditEntry(data, text);
     }
 

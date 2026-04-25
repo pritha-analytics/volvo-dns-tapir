@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import httpx
 import re
@@ -10,8 +11,12 @@ import json
 import io
 import base64
 import os
+import asyncio
 from datetime import datetime
 from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 try:
     import pypdf
@@ -31,7 +36,9 @@ app.add_middleware(
 KONG_URL = "http://localhost:8000/ai"
 GEMINI_MODEL = "google/gemini-2.0-flash-lite-001"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+KONG_MCP_URL = "http://localhost:5000/mcp/sse"
+MAX_TOOL_LOOPS = 5
 ALLOWED_UPLOAD_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 DEMO_RESPONSES = [
@@ -429,6 +436,7 @@ async def chat(body: ChatMessage):
     })
     return {
         "blocked": False, "response": ai_response,
+        "message": ai_response,
         "stage": "DELIVERED", "latency_ms": elapsed,
         "tokens": tokens, "timestamp": timestamp,
         "input_masked": input_masked,
@@ -863,4 +871,216 @@ async def get_stats():
     }
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def agent_chat_stream(message: str):
+    try:
+        from mcp.client.sse import sse_client
+        from mcp.client.session import ClientSession
+
+        yield _sse_event("step", {"stage": "source", "msg": "Prompt received by MCP Agent"})
+        await asyncio.sleep(0.2)
+        yield _sse_event("step", {"stage": "kong", "msg": "Kong AI Gateway inspecting prompt..."})
+
+        async with sse_client(KONG_MCP_URL) as streams:
+            async with ClientSession(streams[0], streams[1]) as mcp:
+                await mcp.initialize()
+
+                tools_response = await mcp.list_tools()
+                tool_names = [t.name for t in tools_response.tools]
+                llm_tools = [{
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.inputSchema
+                    }
+                } for t in tools_response.tools]
+
+                yield _sse_event("step", {"stage": "mcp_discover", "msg": f"MCP tools discovered: {', '.join(tool_names)}"})
+
+                system_prompt = (
+                    "You are a helpful Volvo data assistant. You have access to local dataset files via MCP tools.\n"
+                    "Before answering data questions, ALWAYS call list_available_files first, then fetch_documents. "
+                    "Do NOT write Python code blocks — use actual tool calls only."
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ]
+
+                async with httpx.AsyncClient(timeout=60.0) as http:
+                    for _ in range(MAX_TOOL_LOOPS):
+                        yield _sse_event("step", {"stage": "kong", "msg": "Kong AI Proxy routing request to Gemini..."})
+
+                        resp = await http.post(
+                            KONG_URL,
+                            json={"model": GEMINI_MODEL, "messages": messages, "tools": llm_tools},
+                            headers={"Content-Type": "application/json"}
+                        )
+
+                        data = resp.json()
+                        if "error" in data:
+                            err_msg = data["error"].get("message", str(data["error"]))
+                            yield _sse_event("blocked", {"msg": f"⛔ Kong blocked: {err_msg}"})
+                            return
+
+                        llm_msg = data["choices"][0].get("message", {})
+                        if not llm_msg.get("tool_calls"):
+                            content = llm_msg.get("content", "")
+                            yield _sse_event("step", {"stage": "ai", "msg": "Gemini responded ✓"})
+                            yield _sse_event("answer", {"msg": content})
+                            return
+
+                        messages.append(llm_msg)
+                        for tc in llm_msg["tool_calls"]:
+                            fn = tc["function"]["name"]
+                            args = json.loads(tc["function"]["arguments"])
+                            yield _sse_event("step", {"stage": "mcp_call", "msg": f"Calling tool {fn}..."})
+
+                            tool_result = await mcp.call_tool(fn, arguments=args)
+                            result_text = "\n".join(c.text for c in tool_result.content if c.type == "text")
+
+                            yield _sse_event("step", {"stage": "mcp_result", "msg": f"Tool {fn} returned {len(result_text)} chars"})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result_text,
+                                "name": fn
+                            })
+
+        yield _sse_event("error", {"msg": "No answer generated by MCP Agent"})
+    except Exception as e:
+        yield _sse_event("error", {"msg": str(e)})
+
+
+@app.post("/api/agent-chat")
+async def agent_chat(query: PromptQuery):
+    return StreamingResponse(
+        agent_chat_stream(query.message),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.get("/")
+async def root():
+    return FileResponse("static/chat.html", media_type="text/html")
+
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+# ── MCP AGENT CHAT (Server-Sent Events) ──────────────────────────────────────
+KONG_MCP_URL = "http://localhost:8000/mcp/sse"
+MAX_TOOL_LOOPS = 5
+
+async def agent_chat_stream(message: str):
+    """Run the MCP agentic loop and stream each step as an SSE event."""
+    
+    def evt(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    try:
+        from mcp.client.sse import sse_client
+        from mcp.client.session import ClientSession
+
+        yield evt("step", {"stage": "source", "msg": "Prompt received"})
+        yield evt("step", {"stage": "kong", "msg": "Kong AI Gateway — inspecting prompt..."})
+        await asyncio.sleep(0.3)
+
+        async with sse_client(KONG_MCP_URL) as streams:
+            async with ClientSession(streams[0], streams[1]) as mcp:
+                await mcp.initialize()
+
+                tools_response = await mcp.list_tools()
+                tool_names = [t.name for t in tools_response.tools]
+                llm_tools = [{
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.inputSchema
+                    }
+                } for t in tools_response.tools]
+
+                yield evt("step", {"stage": "mcp_discover", "msg": f"MCP tools discovered: {', '.join(tool_names)}"})
+
+                system_prompt = (
+                    "You are a helpful Volvo data assistant. You have access to local dataset files via MCP tools.\n"
+                    "Before answering data questions, ALWAYS call list_available_files first, then fetch_documents. "
+                    "Do NOT write Python code blocks — use actual tool calls only."
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ]
+
+                async with httpx.AsyncClient(timeout=60.0) as http:
+                    for _ in range(MAX_TOOL_LOOPS):
+                        yield evt("step", {"stage": "kong", "msg": "Kong — routing to LLM (ai-proxy)..."})
+
+                        resp = await http.post(
+                            KONG_URL,
+                            json={"model": GEMINI_MODEL, "messages": messages, "tools": llm_tools},
+                            headers={"Content-Type": "application/json"}
+                        )
+                        data = resp.json()
+
+                        if "error" in data:
+                            err_msg = data["error"].get("message", str(data["error"]))
+                            yield evt("blocked", {"msg": f"⛔ Kong blocked: {err_msg}"})
+                            return
+
+                        llm_msg = data["choices"][0].get("message", {})
+
+                        # No more tool calls → final answer
+                        if not llm_msg.get("tool_calls"):
+                            yield evt("step", {"stage": "ai", "msg": "Gemini responded ✓"})
+                            yield evt("step", {"stage": "verdict", "msg": "Response delivered"})
+                            yield evt("answer", {"msg": llm_msg.get("content", "")})
+                            return
+
+                        messages.append(llm_msg)
+
+                        for tc in llm_msg["tool_calls"]:
+                            fn = tc["function"]["name"]
+                            args = json.loads(tc["function"]["arguments"])
+                            yield evt("step", {"stage": "mcp_call", "msg": f"🛠 LLM called {fn}({args})"})
+                            yield evt("step", {"stage": "kong_mcp", "msg": "Kong — routing to MCP server..."})
+
+                            tool_result = await mcp.call_tool(fn, arguments=args)
+                            result_text = "\n".join(c.text for c in tool_result.content if c.type == "text")
+
+                            yield evt("step", {"stage": "mcp_result", "msg": f"MCP returned {len(result_text)} chars"})
+
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result_text,
+                                "name": fn
+                            })
+
+    except Exception as e:
+        yield evt("error", {"msg": str(e)})
+
+
+@app.post("/api/agent-chat")
+async def agent_chat(query: PromptQuery):
+    return StreamingResponse(
+        agent_chat_stream(query.message),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.get("/")
+async def root():
+    return FileResponse("static/index.html", media_type="text/html")
+
+# Add OPTIONS method handling for CORS preflight
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    return {"message": "OK"}
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
