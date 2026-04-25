@@ -567,9 +567,9 @@ function handleAgentEvent(event, payload) {
     setStatus('blocked', payload.msg || 'Smart Assistant request blocked');
     addSystemMsg(payload.msg || 'Assistant blocked');
   } else if (event === 'error') {
-    setStatus('blocked', 'Smart Assistant error — see console');
-    addSystemMsg('Error: ' + (payload.msg || 'Unknown error'));
-    console.error('Smart Assistant error:', payload.msg);
+    const msg = payload.msg || 'Smart Assistant error';
+    setStatus('blocked', msg);
+    addSystemMsg(msg);
   }
 }
 
