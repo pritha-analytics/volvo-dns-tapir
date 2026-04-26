@@ -41,6 +41,12 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY", 
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
+
+DIRECT_SYSTEM_PROMPT = (
+    "You are a helpful AI assistant for Kong AI Gateway and Volvo enterprise security. "
+    "Answer questions clearly and concisely about AI security, GDPR compliance, DNS threats, "
+    "cybersecurity, Kong Gateway features, and general technology topics."
+)
 KONG_MCP_URL = "http://localhost:8765/sse"
 MAX_TOOL_LOOPS = 5
 ALLOWED_UPLOAD_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -423,32 +429,44 @@ async def _try_mcp_answer(message: str, role: str = "analyst") -> Optional[str]:
                         return None
 
                     async with httpx.AsyncClient(timeout=30.0) as http:
-                        # Use a compound hash of the message and file content for unique summarization cache
-                        summarize_task = f"summarize:{target_file}:{message}:{raw[:500]}"
-                        sum_hash = hashlib.sha256(summarize_task.encode('utf-8')).hexdigest()
-                        
-                        resp = await http.post(
-                            KONG_URL,
-                            json={
-                                "model": GEMINI_MODEL,
-                                "messages": [
-                                    {"role": "system", "content": (
-                                        "You are a concise Volvo data assistant. "
-                                        "Answer the user's question using ONLY the file content provided. "
-                                        "Be structured and direct. Do not add information not in the file."
-                                    )},
-                                    {"role": "user", "content": (
-                                        f"Question: {message}\n\n"
-                                        f"File: {target_file}\nContent:\n{raw}"
-                                    )}
-                                ]
-                            },
-                            headers={"Content-Type": "application/json", "x-prompt-hash": sum_hash}
-                        )
-                        d = resp.json()
-                        if "error" in d:
-                            return f"**{target_file}**\n\n{raw}"
-                        return d["choices"][0]["message"].get("content") or raw
+                        mcp_messages = [
+                            {"role": "system", "content": (
+                                "You are a concise Volvo data assistant. "
+                                "Answer the user's question using ONLY the file content provided. "
+                                "Be structured and direct. Do not add information not in the file."
+                            )},
+                            {"role": "user", "content": (
+                                f"Question: {message}\n\n"
+                                f"File: {target_file}\nContent:\n{raw}"
+                            )}
+                        ]
+                        # Try Groq first, then OpenRouter, then return raw
+                        summarized = None
+                        if GROQ_KEY:
+                            try:
+                                gr = await http.post(
+                                    GROQ_URL,
+                                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                                    json={"model": GROQ_MODEL, "messages": mcp_messages}
+                                )
+                                gd = gr.json()
+                                if "choices" in gd:
+                                    summarized = gd["choices"][0]["message"].get("content")
+                            except Exception:
+                                pass
+                        if not summarized and OPENROUTER_KEY:
+                            try:
+                                or_r = await http.post(
+                                    OPENROUTER_URL,
+                                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+                                    json={"model": GEMINI_MODEL, "messages": mcp_messages}
+                                )
+                                od = or_r.json()
+                                if "choices" in od:
+                                    summarized = od["choices"][0]["message"].get("content")
+                            except Exception:
+                                pass
+                        return summarized or f"**{target_file}**\n\n{raw}"
 
                 # ── Search fallback: no specific file, search across all ──
                 tool_result = await mcp_session.call_tool(
@@ -468,27 +486,39 @@ async def _try_mcp_answer(message: str, role: str = "analyst") -> Optional[str]:
                     return None
 
                 async with httpx.AsyncClient(timeout=30.0) as http:
-                    search_task = f"search_summarize:{message}:{raw[:500]}"
-                    search_hash = hashlib.sha256(search_task.encode('utf-8')).hexdigest()
-                    
-                    resp = await http.post(
-                        KONG_URL,
-                        json={
-                            "model": GEMINI_MODEL,
-                            "messages": [
-                                {"role": "system", "content":
-                                    "You are a concise Volvo data assistant. "
-                                    "Answer the user's question using ONLY the search results provided."},
-                                {"role": "user", "content":
-                                    f"Question: {message}\n\nSearch results:\n{raw}"}
-                            ]
-                        },
-                        headers={"Content-Type": "application/json", "x-prompt-hash": search_hash}
-                    )
-                    d = resp.json()
-                    if "error" in d:
-                        return raw
-                    return d["choices"][0]["message"].get("content") or raw
+                    search_messages = [
+                        {"role": "system", "content":
+                            "You are a concise Volvo data assistant. "
+                            "Answer the user's question using ONLY the search results provided."},
+                        {"role": "user", "content":
+                            f"Question: {message}\n\nSearch results:\n{raw}"}
+                    ]
+                    summarized = None
+                    if GROQ_KEY:
+                        try:
+                            gr = await http.post(
+                                GROQ_URL,
+                                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                                json={"model": GROQ_MODEL, "messages": search_messages}
+                            )
+                            gd = gr.json()
+                            if "choices" in gd:
+                                summarized = gd["choices"][0]["message"].get("content")
+                        except Exception:
+                            pass
+                    if not summarized and OPENROUTER_KEY:
+                        try:
+                            or_r = await http.post(
+                                OPENROUTER_URL,
+                                headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+                                json={"model": GEMINI_MODEL, "messages": search_messages}
+                            )
+                            od = or_r.json()
+                            if "choices" in od:
+                                summarized = od["choices"][0]["message"].get("content")
+                        except Exception:
+                            pass
+                    return summarized or raw
 
         finally:
             await streams_context.__aexit__(None, None, None)
@@ -660,16 +690,19 @@ async def chat(body: ChatMessage):
             }
         # MCP not available — fall through to regular LLM chat
 
-    # ── Route to Groq (fast) or Gemini via Kong/OpenRouter (analytical) ─────────
+    # ── Route to Groq (fast) or Gemini via OpenRouter directly ──────────────────
     async with httpx.AsyncClient(timeout=30.0) as client:
 
-        # ── Groq path ────────────────────────────────────────────────────────
+        # ── Groq path (direct) ───────────────────────────────────────────────
         if routing["provider"] == "groq" and GROQ_KEY:
             try:
                 gr_resp = await client.post(
                     GROQ_URL,
                     headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                    json={"model": GROQ_MODEL, "messages": [{"role": "user", "content": sanitized_message}]}
+                    json={"model": GROQ_MODEL, "messages": [
+                        {"role": "system", "content": DIRECT_SYSTEM_PROMPT},
+                        {"role": "user", "content": sanitized_message}
+                    ]}
                 )
                 elapsed = round((time.time() - start) * 1000)
                 gr_data = gr_resp.json()
@@ -677,9 +710,47 @@ async def chat(body: ChatMessage):
                     ai_response = gr_data["choices"][0]["message"]["content"]
                     tokens = gr_data.get("usage", {}).get("total_tokens", 0)
             except Exception:
-                pass  # Groq unavailable — fall through to Gemini
+                pass  # Groq unavailable — fall through to OpenRouter
 
-        # ── Gemini path: try Kong gateway first ──────────────────────────────
+        # ── Gemini path: OpenRouter direct (bypasses Kong prompt decorator) ──
+        if ai_response is None and OPENROUTER_KEY:
+            try:
+                or_resp = await client.post(
+                    OPENROUTER_URL,
+                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+                    json={"model": GEMINI_MODEL, "messages": [
+                        {"role": "system", "content": DIRECT_SYSTEM_PROMPT},
+                        {"role": "user", "content": sanitized_message}
+                    ]}
+                )
+                elapsed = round((time.time() - start) * 1000)
+                or_data = or_resp.json()
+                if "choices" in or_data:
+                    ai_response = or_data["choices"][0]["message"]["content"]
+                    tokens = or_data.get("usage", {}).get("total_tokens", 0)
+            except Exception:
+                pass
+
+        # ── Groq fallback when OpenRouter is unavailable ──────────────────────
+        if ai_response is None and GROQ_KEY:
+            try:
+                gr_resp = await client.post(
+                    GROQ_URL,
+                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                    json={"model": GROQ_MODEL, "messages": [
+                        {"role": "system", "content": DIRECT_SYSTEM_PROMPT},
+                        {"role": "user", "content": sanitized_message}
+                    ]}
+                )
+                elapsed = round((time.time() - start) * 1000)
+                gr_data = gr_resp.json()
+                if "choices" in gr_data:
+                    ai_response = gr_data["choices"][0]["message"]["content"]
+                    tokens = gr_data.get("usage", {}).get("total_tokens", 0)
+            except Exception:
+                pass
+
+        # ── Kong gateway (rate-limit detection + semantic cache check) ────────
         if ai_response is None:
             try:
                 prompt_hash = hashlib.sha256(sanitized_message.encode('utf-8')).hexdigest()
@@ -727,23 +798,7 @@ async def chat(body: ChatMessage):
                     ai_response = data["choices"][0]["message"]["content"]
                     tokens = data.get("usage", {}).get("total_tokens", 0)
             except Exception:
-                pass  # Kong unreachable — fall through to OpenRouter direct
-
-        # ── Direct OpenRouter fallback ────────────────────────────────────────
-        if ai_response is None and OPENROUTER_KEY:
-            try:
-                or_resp = await client.post(
-                    OPENROUTER_URL,
-                    headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-                    json={"model": GEMINI_MODEL, "messages": [{"role": "user", "content": sanitized_message}]}
-                )
-                elapsed = round((time.time() - start) * 1000)
-                or_data = or_resp.json()
-                if "choices" in or_data:
-                    ai_response = or_data["choices"][0]["message"]["content"]
-                    tokens = or_data.get("usage", {}).get("total_tokens", 0)
-            except Exception:
-                pass
+                pass  # Kong unreachable — demo fallback handles it
 
     elapsed = round((time.time() - start) * 1000)
 

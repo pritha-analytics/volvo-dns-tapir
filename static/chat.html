@@ -371,83 +371,51 @@
       background: linear-gradient(135deg, rgba(0,20,40,.9), rgba(0,10,25,.95));
       border: 1px solid rgba(0,150,220,.25);
       border-left: 3px solid var(--kong);
-      padding: 14px 16px;
-      margin: 8px 0;
+      padding: 8px 12px;
+      margin: 6px 0;
       font-family: var(--mono);
       animation: slideIn .25s ease;
     }
     .mr-header {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 12px;
+      gap: 8px;
+      margin-bottom: 8px;
     }
     .mr-title {
-      font-size: 10px;
+      font-size: 9px;
       letter-spacing: 2px;
       color: var(--kong);
       font-weight: 700;
     }
     .mr-latency {
-      font-size: 9px;
+      font-size: 8px;
       color: var(--muted);
       margin-left: auto;
     }
-    .mr-models {
+    .mr-inline {
       display: flex;
-      gap: 10px;
-      margin-bottom: 10px;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
     }
-    .mr-model {
-      flex: 1;
-      border: 1px solid var(--border);
-      padding: 10px 12px;
-      position: relative;
-      opacity: .45;
-      transition: all .3s;
-    }
-    .mr-model.chosen {
-      opacity: 1;
-      border-color: var(--kong);
-      background: rgba(0,150,220,.06);
-    }
-    .mr-model.chosen.groq-chosen {
-      border-color: #00e676;
-      background: rgba(0,230,118,.06);
-    }
-    .mr-model-name {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      margin-bottom: 4px;
-    }
-    .mr-model.chosen .mr-model-name { color: var(--kong); }
-    .mr-model.chosen.groq-chosen .mr-model-name { color: #00e676; }
-    .mr-model-desc {
-      font-size: 8px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-    .mr-model-cost {
+    .mr-pill {
       font-size: 9px;
-      margin-top: 6px;
+      padding: 3px 8px;
+      border-radius: 2px;
+      border: 1px solid;
+      letter-spacing: .5px;
     }
-    .mr-chosen-tag {
-      display: inline-block;
-      font-size: 8px;
-      padding: 2px 6px;
-      background: var(--kong);
-      color: #000;
-      font-weight: 700;
-      letter-spacing: 1px;
-      margin-top: 6px;
-    }
-    .mr-chosen-tag.groq { background: #00e676; }
+    .mr-pill.chosen.groq  { color: #00e676; border-color: #00e676; background: rgba(0,230,118,.07); font-weight: 700; }
+    .mr-pill.chosen.gemini { color: var(--kong); border-color: var(--kong); background: rgba(0,150,220,.07); font-weight: 700; }
+    .mr-pill.rejected { color: var(--muted); border-color: var(--border); text-decoration: line-through; opacity: .6; }
+    .mr-arrow { color: var(--muted); font-size: 10px; }
     .mr-reason {
-      font-size: 9px;
+      font-size: 8px;
       color: var(--dim);
       border-top: 1px solid var(--border);
-      padding-top: 8px;
+      padding-top: 5px;
     }
     .mr-reason strong { color: var(--text); }
 
@@ -1195,19 +1163,27 @@
       display: flex;
       flex-direction: column;
       background: var(--bg2);
-      transition: width .3s, opacity .3s;
+      transition: width .3s, opacity .3s, border .3s;
     }
 
     .audit-col.hidden {
       width: 0;
+      min-width: 0;
       opacity: 0;
       overflow: hidden;
+      border: none;
+      padding: 0;
+      margin: 0;
     }
 
     .file-col.hidden {
       width: 0;
+      min-width: 0;
       opacity: 0;
       overflow: hidden;
+      border: none;
+      padding: 0;
+      margin: 0;
     }
 
     .panel-toggle {
@@ -2660,35 +2636,27 @@
     function addRoutingDecisionCard(model, reason, tier) {
       const msgs = document.getElementById('chatMessages');
       const isGroq = tier === 'fast';
-      const rival = isGroq
-        ? { name: 'GEMINI 2.0 FLASH', desc: 'Deep analysis · security · compliance', cost: '~$0.30 / 1M tokens', why: 'Overkill for simple query' }
-        : { name: 'LLAMA 3.3 70B (GROQ)', desc: 'Fast · conversational · code', cost: '~$0.06 / 1M tokens', why: 'Insufficient depth for analysis' };
       const chosen = isGroq
-        ? { name: 'LLAMA 3.3 70B (GROQ)', desc: 'Fast · low latency · efficient', cost: '~$0.06 / 1M tokens', tag: 'groq' }
-        : { name: 'GEMINI 2.0 FLASH', desc: 'Powerful · security-aware · precise', cost: '~$0.30 / 1M tokens', tag: '' };
+        ? { name: 'LLAMA 3.3 (GROQ)', desc: 'Fast · efficient', cost: '$0.06 / 1M', tag: 'groq' }
+        : { name: 'GEMINI 2.0 FLASH', desc: 'Deep · precise', cost: '$0.30 / 1M', tag: '' };
+
+      const rival = isGroq
+        ? { name: 'Gemini 2.0 Flash', cost: '$0.30/1M' }
+        : { name: 'Llama 3.3 (Groq)', cost: '$0.06/1M' };
 
       const card = document.createElement('div');
       card.className = 'msg-routing';
       card.innerHTML = `
         <div class="mr-header">
           <span class="mr-title">🧠 KONG SMART ROUTING DECISION</span>
-          <span class="mr-latency">Routing analysis: &lt;5ms</span>
+          <span class="mr-latency">&lt;5ms</span>
         </div>
-        <div class="mr-models">
-          <div class="mr-model chosen ${isGroq ? 'groq-chosen' : ''}">
-            <div class="mr-model-name">${chosen.name}</div>
-            <div class="mr-model-desc">${chosen.desc}</div>
-            <div class="mr-model-cost">${chosen.cost}</div>
-            <div class="mr-chosen-tag ${chosen.tag}">✓ SELECTED</div>
-          </div>
-          <div class="mr-model">
-            <div class="mr-model-name">${rival.name}</div>
-            <div class="mr-model-desc">${rival.desc}</div>
-            <div class="mr-model-cost">${rival.cost}</div>
-            <div class="mr-model-desc" style="margin-top:6px;color:#ff3b5c">${rival.why}</div>
-          </div>
+        <div class="mr-inline">
+          <span class="mr-pill chosen ${isGroq ? 'groq' : 'gemini'}">✓ ${chosen.name} · ${chosen.cost}</span>
+          <span class="mr-arrow">→</span>
+          <span class="mr-pill rejected">${rival.name} · ${rival.cost} · skipped</span>
         </div>
-        <div class="mr-reason">Kong detected: <strong>${reason}</strong> — routing to optimal model to save tokens &amp; cost</div>
+        <div class="mr-reason">Kong detected: <strong>${reason}</strong></div>
       `;
       msgs.appendChild(card);
       msgs.scrollTop = msgs.scrollHeight;
@@ -3248,9 +3216,6 @@
             await sleep(350);
             setStatus('processing', `✅ Kong routing decision: → ${model}`);
             await sleep(400);
-
-            /* Show routing decision card in chat */
-            addRoutingDecisionCard(model, data.routing_reason || 'Prompt analysis', tier);
 
             /* Update pipeline AI node to the chosen model */
             const isGroq = tier === 'fast';
